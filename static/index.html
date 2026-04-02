@@ -909,14 +909,36 @@
                 plugins: [dayBandsBgPlugin, coloredFillPlugin, nowLinePlugin, dayLabelsPlugin],
             });
 
-            // Double-tap to reset zoom
+            // Double-tap to reset zoom (single finger only — ignore pinch releases)
             let lastTap = 0;
-            chart.canvas.addEventListener('touchend', (e) => {
-                const now = Date.now();
-                if (now - lastTap < 300) {
-                    chart.resetZoom('default');
+            let wasPinching = false;
+
+            chart.canvas.addEventListener('touchstart', (e) => {
+                // Track if this is a multi-finger gesture
+                if (e.touches.length > 1) {
+                    wasPinching = true;
                 }
-                lastTap = now;
+            });
+
+            chart.canvas.addEventListener('touchend', (e) => {
+                // If we were pinching, ignore touchend until all fingers are up
+                if (wasPinching) {
+                    if (e.touches.length === 0) {
+                        wasPinching = false;  // Reset after all fingers lifted
+                    }
+                    return;  // Don't treat pinch release as a tap
+                }
+
+                // Only count single-finger taps
+                if (e.changedTouches.length === 1 && e.touches.length === 0) {
+                    const now = Date.now();
+                    if (now - lastTap < 300) {
+                        chart.resetZoom('default');
+                        lastTap = 0;  // Prevent triple-tap triggering again
+                    } else {
+                        lastTap = now;
+                    }
+                }
             });
 
             // Double-click to reset zoom (desktop)
