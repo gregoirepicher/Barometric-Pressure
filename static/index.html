@@ -249,6 +249,33 @@
             font-size: 1.1rem;
         }
 
+        /* Data loading status */
+        .data-status {
+            text-align: center;
+            padding: 10px 16px;
+            border-radius: 8px;
+            margin-bottom: 12px;
+            font-size: 0.85rem;
+        }
+
+        .data-status.loading {
+            background: rgba(99, 102, 241, 0.12);
+            border: 1px solid rgba(99, 102, 241, 0.25);
+            color: #a5b4fc;
+        }
+
+        .data-status.error {
+            background: rgba(220, 38, 38, 0.12);
+            border: 1px solid rgba(220, 38, 38, 0.3);
+            color: #fca5a5;
+        }
+
+        .data-status.stale {
+            background: rgba(251, 191, 36, 0.12);
+            border: 1px solid rgba(251, 191, 36, 0.25);
+            color: #fde68a;
+        }
+
         /* Chart legend */
         .chart-legend {
             display: flex;
@@ -318,6 +345,8 @@
                 </div>
             </div>
         </div>
+
+        <div id="dataStatus" class="data-status" style="display:none;"></div>
 
         <div class="chart-wrapper">
             <canvas id="pressureChart" height="400"></canvas>
@@ -443,6 +472,42 @@
         daysBackSlider.addEventListener('input', onSliderChange);
         daysForwardSlider.addEventListener('input', onSliderChange);
 
+        // --- localStorage cache ---
+        function localCacheKey() {
+            return `bp_${currentCity.lat}_${currentCity.lon}_${daysBackSlider.value}_${daysForwardSlider.value}`;
+        }
+
+        function saveToLocal(data) {
+            try {
+                const entry = { data, ts: Date.now() };
+                localStorage.setItem(localCacheKey(), JSON.stringify(entry));
+                localStorage.setItem('bp_last_city', JSON.stringify(currentCity));
+            } catch (e) { /* storage full, ignore */ }
+        }
+
+        function loadFromLocal() {
+            try {
+                const raw = localStorage.getItem(localCacheKey());
+                if (!raw) return null;
+                const entry = JSON.parse(raw);
+                // Accept cache up to 2 hours old
+                if (Date.now() - entry.ts > 2 * 60 * 60 * 1000) return null;
+                return entry;
+            } catch (e) { return null; }
+        }
+
+        const dataStatus = document.getElementById('dataStatus');
+
+        function showStatus(type, message) {
+            dataStatus.className = `data-status ${type}`;
+            dataStatus.textContent = message;
+            dataStatus.style.display = 'block';
+        }
+
+        function hideStatus() {
+            dataStatus.style.display = 'none';
+        }
+
         // --- Chart ---
         async function loadData() {
             const params = new URLSearchParams({
@@ -452,13 +517,53 @@
                 days_forward: daysForwardSlider.value,
             });
 
-            try {
-                const resp = await fetch(`/api/pressure?${params}`);
-                const data = await resp.json();
-                renderChart(data);
-                updateStatus(data);
-            } catch (err) {
-                console.error('Failed to load data:', err);
+            showStatus('loading', 'Loading pressure data...');
+
+            // Retry up to 3 times with backoff
+            let lastError = null;
+            for (let attempt = 0; attempt < 3; attempt++) {
+                try {
+                    const controller = new AbortController();
+                    const timeout = setTimeout(() => controller.abort(), 15000);
+                    const resp = await fetch(`/api/pressure?${params}`, { signal: controller.signal });
+                    clearTimeout(timeout);
+
+                    if (!resp.ok) {
+                        throw new Error(`Server returned ${resp.status}`);
+                    }
+
+                    const data = await resp.json();
+
+                    if (data.error) {
+                        throw new Error(data.error);
+                    }
+
+                    renderChart(data);
+                    updateStatus(data);
+                    saveToLocal(data);
+                    hideStatus();
+                    return;
+                } catch (err) {
+                    lastError = err;
+                    console.warn(`Load attempt ${attempt + 1} failed:`, err.message);
+                    if (attempt < 2) {
+                        await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
+                    }
+                }
+            }
+
+            // All retries failed — try localStorage
+            console.error('All attempts failed:', lastError);
+            const cached = loadFromLocal();
+            if (cached) {
+                const ageMin = Math.round((Date.now() - cached.ts) / 60000);
+                showStatus('stale', `Showing cached data from ${ageMin} min ago — live data temporarily unavailable`);
+                renderChart(cached.data);
+                updateStatus(cached.data);
+            } else {
+                showStatus('error', 'Unable to load pressure data. Will retry automatically...');
+                // Auto-retry after 30 seconds
+                setTimeout(loadData, 30000);
             }
         }
 

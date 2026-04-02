@@ -1,8 +1,33 @@
 from flask import Flask, request, jsonify, send_from_directory
 import requests
 from datetime import datetime, timedelta
+import time
+import logging
 
 app = Flask(__name__, static_folder="static")
+logging.basicConfig(level=logging.INFO)
+
+# --- Simple in-memory cache ---
+# Caches Open-Meteo responses for 10 minutes to avoid hammering the API
+# and to serve data quickly even if Open-Meteo has a brief hiccup.
+_cache = {}
+CACHE_TTL = 600  # 10 minutes in seconds
+
+
+def cache_get(key):
+    entry = _cache.get(key)
+    if entry and time.time() - entry["ts"] < CACHE_TTL:
+        return entry["data"]
+    return None
+
+
+def cache_set(key, data):
+    _cache[key] = {"data": data, "ts": time.time()}
+    # Evict old entries to prevent unbounded growth
+    now = time.time()
+    stale = [k for k, v in _cache.items() if now - v["ts"] > CACHE_TTL * 3]
+    for k in stale:
+        del _cache[k]
 
 
 @app.route("/")
@@ -16,6 +41,12 @@ def service_worker():
     return send_from_directory("static", "sw.js", mimetype="application/javascript")
 
 
+@app.route("/health")
+def health():
+    """Health check endpoint for uptime monitors."""
+    return jsonify({"status": "ok", "timestamp": datetime.utcnow().isoformat()})
+
+
 @app.route("/api/pressure")
 def get_pressure():
     lat = request.args.get("lat", 43.6532, type=float)
@@ -26,40 +57,56 @@ def get_pressure():
     days_back = min(max(days_back, 1), 10)
     days_forward = min(max(days_forward, 1), 10)
 
-    today = datetime.utcnow().date()
-    start_date = today - timedelta(days=days_back)
-    end_date = today + timedelta(days=days_forward)
+    # Round coordinates to 2 decimal places for cache key consistency
+    cache_key = f"pressure:{round(lat,2)}:{round(lon,2)}:{days_back}:{days_forward}"
+    cached = cache_get(cache_key)
+    if cached:
+        return jsonify(cached)
 
-    # Open-Meteo: historical/current + forecast in one call
-    # Use forecast API which includes past days
     url = "https://api.open-meteo.com/v1/forecast"
     params = {
         "latitude": lat,
         "longitude": lon,
         "hourly": "surface_pressure",
         "past_days": days_back,
-        "forecast_days": days_forward + 1,  # +1 to include today
+        "forecast_days": days_forward + 1,
         "timezone": "auto",
     }
 
-    resp = requests.get(url, params=params, timeout=10)
-    resp.raise_for_status()
-    data = resp.json()
+    # Retry up to 2 times with increasing timeout
+    last_error = None
+    for attempt in range(3):
+        try:
+            timeout = 10 + attempt * 5  # 10s, 15s, 20s
+            resp = requests.get(url, params=params, timeout=timeout)
+            resp.raise_for_status()
+            data = resp.json()
 
-    hourly = data.get("hourly", {})
-    times = hourly.get("time", [])
-    pressures = hourly.get("surface_pressure", [])
+            hourly = data.get("hourly", {})
+            result = {
+                "times": hourly.get("time", []),
+                "pressures": hourly.get("surface_pressure", []),
+                "timezone": data.get("timezone", "UTC"),
+                "latitude": data.get("latitude"),
+                "longitude": data.get("longitude"),
+                "elevation": data.get("elevation"),
+            }
+            cache_set(cache_key, result)
+            return jsonify(result)
+        except Exception as e:
+            last_error = e
+            logging.warning(f"Open-Meteo attempt {attempt + 1} failed: {e}")
+            if attempt < 2:
+                time.sleep(1)
 
-    # Build response with timezone info
-    result = {
-        "times": times,
-        "pressures": pressures,
-        "timezone": data.get("timezone", "UTC"),
-        "latitude": data.get("latitude"),
-        "longitude": data.get("longitude"),
-        "elevation": data.get("elevation"),
-    }
-    return jsonify(result)
+    # All retries failed — return stale cache if available
+    stale = _cache.get(cache_key)
+    if stale:
+        logging.info("Serving stale cache after API failure")
+        return jsonify(stale["data"])
+
+    # No cache at all — return error
+    return jsonify({"error": str(last_error)}), 502
 
 
 @app.route("/api/geocode")
@@ -69,12 +116,21 @@ def geocode():
     if len(name) < 2:
         return jsonify({"results": []})
 
+    cache_key = f"geo:{name.lower()}"
+    cached = cache_get(cache_key)
+    if cached:
+        return jsonify(cached)
+
     url = "https://geocoding-api.open-meteo.com/v1/search"
     params = {"name": name, "count": 10, "language": "en", "format": "json"}
 
-    resp = requests.get(url, params=params, timeout=10)
-    resp.raise_for_status()
-    data = resp.json()
+    try:
+        resp = requests.get(url, params=params, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as e:
+        logging.warning(f"Geocode API failed: {e}")
+        return jsonify({"results": []})
 
     results = []
     for r in data.get("results", []):
@@ -85,7 +141,9 @@ def geocode():
             "latitude": r.get("latitude"),
             "longitude": r.get("longitude"),
         })
-    return jsonify({"results": results})
+    response = {"results": results}
+    cache_set(cache_key, response)
+    return jsonify(response)
 
 
 if __name__ == "__main__":
