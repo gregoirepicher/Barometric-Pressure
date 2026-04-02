@@ -1,10 +1,12 @@
-const CACHE_NAME = 'bp-tracker-v4';
+const CACHE_NAME = 'bp-tracker-v5';
 const STATIC_ASSETS = [
   '/',
   '/static/icon.svg',
   '/static/manifest.json',
   'https://cdn.jsdelivr.net/npm/chart.js@4',
   'https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3',
+  'https://cdn.jsdelivr.net/npm/hammerjs@2',
+  'https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2',
 ];
 
 // Install: cache static shell

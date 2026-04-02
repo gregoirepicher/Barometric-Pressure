@@ -16,6 +16,8 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
+    <script src="https://cdn.jsdelivr.net/npm/hammerjs@2"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -249,6 +251,13 @@
             font-size: 1.1rem;
         }
 
+        .chart-hint {
+            text-align: center;
+            font-size: 0.8rem;
+            color: #64748b;
+            margin-bottom: 12px;
+        }
+
         /* Data loading status */
         .data-status {
             text-align: center;
@@ -324,20 +333,6 @@
 
         <div class="controls">
             <div class="range-group">
-                <label>Days in the Past</label>
-                <div class="range-row">
-                    <input type="range" id="daysBack" min="1" max="10" value="3">
-                    <span class="range-value" id="daysBackValue">3 days</span>
-                </div>
-            </div>
-            <div class="range-group">
-                <label>Days Ahead (Forecast)</label>
-                <div class="range-row">
-                    <input type="range" id="daysForward" min="1" max="10" value="3">
-                    <span class="range-value" id="daysForwardValue">3 days</span>
-                </div>
-            </div>
-            <div class="range-group">
                 <label>Text Size</label>
                 <div class="range-row">
                     <input type="range" id="textScale" min="80" max="160" value="100" step="10">
@@ -345,6 +340,7 @@
                 </div>
             </div>
         </div>
+        <p class="chart-hint">Pinch to zoom &bull; Drag to pan &bull; Double-tap to reset</p>
 
         <div id="dataStatus" class="data-status" style="display:none;"></div>
 
@@ -385,30 +381,31 @@
     <script>
         const cityInput = document.getElementById('cityInput');
         const cityDropdown = document.getElementById('cityDropdown');
-        const daysBackSlider = document.getElementById('daysBack');
-        const daysForwardSlider = document.getElementById('daysForward');
-        const daysBackValue = document.getElementById('daysBackValue');
-        const daysForwardValue = document.getElementById('daysForwardValue');
         const alertBanner = document.getElementById('alertBanner');
 
         const textScaleSlider = document.getElementById('textScale');
         const textScaleValue = document.getElementById('textScaleValue');
 
+        // Always load full range; zoom/pan controls what's visible
+        const DAYS_BACK = 10;
+        const DAYS_FORWARD = 10;
+        const DEFAULT_VIEW_DAYS_BACK = 3;
+        const DEFAULT_VIEW_DAYS_FORWARD = 3;
+
         let currentCity = { name: 'Toronto', lat: 43.6532, lon: -79.3832 };
         let chart = null;
         let searchTimeout = null;
+        let lastLoadedData = null;  // Keep reference for text size re-render
 
         // --- Text Size ---
         textScaleSlider.addEventListener('input', () => {
             const pct = textScaleSlider.value;
             textScaleValue.textContent = `${pct}%`;
             document.documentElement.style.setProperty('--ui-scale', pct / 100);
-            // Re-render chart so its internal fonts update too
-            if (chart) {
-                chart.destroy();
-                chart = null;
+            if (lastLoadedData) {
+                if (chart) { chart.destroy(); chart = null; }
+                renderChart(lastLoadedData);
             }
-            loadData();
         });
 
         // --- City Search ---
@@ -455,26 +452,9 @@
             cityDropdown.classList.add('open');
         }
 
-        // --- Range Sliders ---
-        daysBackSlider.addEventListener('input', () => {
-            daysBackValue.textContent = `${daysBackSlider.value} days`;
-        });
-        daysForwardSlider.addEventListener('input', () => {
-            daysForwardValue.textContent = `${daysForwardSlider.value} days`;
-        });
-
-        // Debounce data loading on slider change
-        let sliderTimeout = null;
-        function onSliderChange() {
-            clearTimeout(sliderTimeout);
-            sliderTimeout = setTimeout(loadData, 400);
-        }
-        daysBackSlider.addEventListener('input', onSliderChange);
-        daysForwardSlider.addEventListener('input', onSliderChange);
-
         // --- localStorage cache ---
         function localCacheKey() {
-            return `bp_${currentCity.lat}_${currentCity.lon}_${daysBackSlider.value}_${daysForwardSlider.value}`;
+            return `bp_${currentCity.lat}_${currentCity.lon}_full`;
         }
 
         function saveToLocal(data) {
@@ -513,8 +493,8 @@
             const params = new URLSearchParams({
                 lat: currentCity.lat,
                 lon: currentCity.lon,
-                days_back: daysBackSlider.value,
-                days_forward: daysForwardSlider.value,
+                days_back: DAYS_BACK,
+                days_forward: DAYS_FORWARD,
             });
 
             showStatus('loading', 'Loading pressure data...');
@@ -538,6 +518,7 @@
                         throw new Error(data.error);
                     }
 
+                    lastLoadedData = data;
                     renderChart(data);
                     updateStatus(data);
                     saveToLocal(data);
@@ -789,6 +770,13 @@
             const maxP = Math.max(...validPressures);
             const padding = Math.max((maxP - minP) * 0.15, 2);
 
+            // Default visible window: 3 days back, 3 days forward from now
+            const defaultMin = new Date(now.getTime() - DEFAULT_VIEW_DAYS_BACK * 24 * 60 * 60 * 1000);
+            const defaultMax = new Date(now.getTime() + DEFAULT_VIEW_DAYS_FORWARD * 24 * 60 * 60 * 1000);
+            // Absolute limits: full data range
+            const absMin = times[0];
+            const absMax = times[times.length - 1];
+
             chart = new Chart(ctx, {
                 type: 'line',
                 data: {
@@ -796,7 +784,6 @@
                     datasets: [{
                         label: `Pressure in ${currentCity.name} (hPa)`,
                         data: pressures,
-                        // Segment coloring for the line itself
                         segment: {
                             borderColor: getSegmentColor(ratings),
                         },
@@ -805,7 +792,7 @@
                         pointRadius: 0,
                         pointHoverRadius: 5,
                         pointHoverBackgroundColor: '#f8fafc',
-                        fill: false,  // We handle fill with our custom plugin
+                        fill: false,
                         tension: 0.3,
                     }]
                 },
@@ -814,7 +801,7 @@
                     maintainAspectRatio: false,
                     layout: {
                         padding: {
-                            top: getScaledFont(13) + 20,  // Reserve space for date labels
+                            top: getScaledFont(13) + 20,
                         }
                     },
                     interaction: {
@@ -823,7 +810,7 @@
                     },
                     plugins: {
                         legend: {
-                            display: false, // We use our custom legend below the chart
+                            display: false,
                         },
                         tooltip: {
                             backgroundColor: '#1e293b',
@@ -856,22 +843,47 @@
                                     return `${val.toFixed(1)} hPa${changeStr}${ratingLabel}`;
                                 }
                             }
-                        }
+                        },
+                        zoom: {
+                            pan: {
+                                enabled: true,
+                                mode: 'x',
+                                modifierKey: null,
+                            },
+                            zoom: {
+                                wheel: { enabled: true },
+                                pinch: { enabled: true },
+                                mode: 'x',
+                                onZoomComplete: ({ chart }) => {
+                                    // Update Y range to fit visible data
+                                    autoScaleY(chart, pressures, times);
+                                },
+                            },
+                            limits: {
+                                x: {
+                                    min: absMin.getTime(),
+                                    max: absMax.getTime(),
+                                    minRange: 6 * 60 * 60 * 1000,  // Minimum 6 hours visible
+                                },
+                            },
+                        },
                     },
                     scales: {
                         x: {
                             type: 'time',
+                            min: defaultMin,
+                            max: defaultMax,
                             time: {
                                 displayFormats: {
-                                    hour: 'EEE ha',   // e.g. "Mon 3PM"
-                                    day: 'EEE',       // e.g. "Mon"
+                                    hour: 'EEE ha',
+                                    day: 'EEE',
                                 },
                                 tooltipFormat: 'PPpp',
                             },
                             grid: { color: 'rgba(148, 163, 184, 0.06)' },
                             ticks: {
                                 color: '#94a3b8',
-                                maxTicksLimit: 16,
+                                maxTicksLimit: 12,
                                 font: { size: getScaledFont(12), weight: 'bold' },
                             },
                         },
@@ -895,6 +907,44 @@
                 },
                 plugins: [dayBandsBgPlugin, coloredFillPlugin, nowLinePlugin, dayLabelsPlugin],
             });
+
+            // Double-tap to reset zoom
+            let lastTap = 0;
+            chart.canvas.addEventListener('touchend', (e) => {
+                const now = Date.now();
+                if (now - lastTap < 300) {
+                    chart.resetZoom('default');
+                }
+                lastTap = now;
+            });
+
+            // Double-click to reset zoom (desktop)
+            chart.canvas.addEventListener('dblclick', () => {
+                chart.resetZoom('default');
+            });
+        }
+
+        // Auto-scale Y axis to fit visible data after zoom/pan
+        function autoScaleY(chartInstance, allPressures, allTimes) {
+            const xScale = chartInstance.scales.x;
+            const visMin = xScale.min;
+            const visMax = xScale.max;
+
+            let minP = Infinity, maxP = -Infinity;
+            for (let i = 0; i < allTimes.length; i++) {
+                const t = allTimes[i].getTime();
+                if (t >= visMin && t <= visMax && allPressures[i] !== null) {
+                    if (allPressures[i] < minP) minP = allPressures[i];
+                    if (allPressures[i] > maxP) maxP = allPressures[i];
+                }
+            }
+
+            if (minP !== Infinity) {
+                const pad = Math.max((maxP - minP) * 0.15, 2);
+                chartInstance.options.scales.y.min = Math.floor(minP - pad);
+                chartInstance.options.scales.y.max = Math.ceil(maxP + pad);
+                chartInstance.update('none');
+            }
         }
 
         function updateStatus(data) {
