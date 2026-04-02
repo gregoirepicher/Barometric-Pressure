@@ -586,6 +586,34 @@
             };
         }
 
+        // Custom tooltip positioner: place above or below the point
+        // depending on which side has more room
+        Chart.Tooltip.positioners.smartPosition = function(elements, eventPosition) {
+            if (!elements.length) return false;
+
+            const el = elements[0];
+            const chartArea = el.element.$context.chart.chartArea;
+            const pointY = el.element.y;
+
+            // Space above vs below the data point
+            const spaceAbove = pointY - chartArea.top;
+            const spaceBelow = chartArea.bottom - pointY;
+
+            let y;
+            if (spaceAbove > spaceBelow) {
+                // Place tooltip above the point
+                y = pointY - 80;
+            } else {
+                // Place tooltip below the point
+                y = pointY + 20;
+            }
+
+            // Clamp within chart area
+            y = Math.max(chartArea.top + 5, Math.min(y, chartArea.bottom - 40));
+
+            return { x: el.element.x, y: y };
+        };
+
         function renderChart(data) {
             const ctx = document.getElementById('pressureChart').getContext('2d');
             const times = data.times.map(t => new Date(t));
@@ -822,6 +850,8 @@
                             titleFont: { size: getScaledFont(13) },
                             bodyFont: { size: getScaledFont(13) },
                             padding: 12,
+                            position: 'smartPosition',
+                            caretSize: 8,
                             callbacks: {
                                 title: (items) => {
                                     const d = new Date(items[0].parsed.x);
