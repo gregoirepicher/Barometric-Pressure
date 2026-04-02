@@ -683,13 +683,13 @@
 
                         if (x2 > chartArea.left && x1 < chartArea.right && x2 - x1 > 30) {
                             const labelX = (x1 + x2) / 2;
-                            const dayName = day.toLocaleDateString('en-US', { weekday: 'short' });
                             const datePart = day.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
                             ctx.textAlign = 'center';
 
                             // Semi-transparent background pill for readability
-                            const pillW = Math.max(ctx.measureText(datePart).width, ctx.measureText(dayName).width) + 16;
-                            const pillH = fs * 2 + 12;
+                            ctx.font = `bold ${fs}px -apple-system, sans-serif`;
+                            const pillW = ctx.measureText(datePart).width + 20;
+                            const pillH = fs + 10;
                             const pillX = labelX - pillW / 2;
                             const pillY = chartArea.top + 4;
                             ctx.fillStyle = 'rgba(15, 23, 42, 0.7)';
@@ -697,15 +697,9 @@
                             ctx.roundRect(pillX, pillY, pillW, pillH, 6);
                             ctx.fill();
 
-                            // Day name (bold, brighter)
+                            // Date (e.g. "Mar 29")
                             ctx.fillStyle = '#cbd5e1';
-                            ctx.font = `bold ${fs}px -apple-system, sans-serif`;
-                            ctx.fillText(dayName, labelX, pillY + fs + 2);
-
-                            // Date (lighter)
-                            ctx.fillStyle = '#94a3b8';
-                            ctx.font = `${fs - 1}px -apple-system, sans-serif`;
-                            ctx.fillText(datePart, labelX, pillY + fs * 2 + 4);
+                            ctx.fillText(datePart, labelX, pillY + fs + 2);
                         }
 
                         day = nextDay;
@@ -820,7 +814,7 @@
                     maintainAspectRatio: false,
                     layout: {
                         padding: {
-                            top: getScaledFont(13) * 2 + 20,  // Reserve space for day labels
+                            top: getScaledFont(13) + 20,  // Reserve space for date labels
                         }
                     },
                     interaction: {
@@ -869,16 +863,16 @@
                             type: 'time',
                             time: {
                                 displayFormats: {
-                                    hour: 'ha',
-                                    day: 'MMM d',
+                                    hour: 'EEE ha',   // e.g. "Mon 3PM"
+                                    day: 'EEE',       // e.g. "Mon"
                                 },
                                 tooltipFormat: 'PPpp',
                             },
                             grid: { color: 'rgba(148, 163, 184, 0.06)' },
                             ticks: {
-                                color: '#64748b',
+                                color: '#94a3b8',
                                 maxTicksLimit: 16,
-                                font: { size: getScaledFont(12) },
+                                font: { size: getScaledFont(12), weight: 'bold' },
                             },
                         },
                         y: {
