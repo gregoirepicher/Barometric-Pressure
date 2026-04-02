@@ -11,7 +11,7 @@ logging.basicConfig(level=logging.INFO)
 # Caches Open-Meteo responses for 10 minutes to avoid hammering the API
 # and to serve data quickly even if Open-Meteo has a brief hiccup.
 _cache = {}
-CACHE_TTL = 600  # 10 minutes in seconds
+CACHE_TTL = 1800  # 30 minutes — pressure data doesn't change that fast
 
 
 def cache_get(key):
@@ -54,8 +54,9 @@ def get_pressure():
     days_back = request.args.get("days_back", 3, type=int)
     days_forward = request.args.get("days_forward", 3, type=int)
 
+    # Clamp ranges — Open-Meteo free tier supports up to 7 days forecast
     days_back = min(max(days_back, 1), 10)
-    days_forward = min(max(days_forward, 1), 10)
+    days_forward = min(max(days_forward, 1), 7)
 
     # Round coordinates to 2 decimal places for cache key consistency
     cache_key = f"pressure:{round(lat,2)}:{round(lon,2)}:{days_back}:{days_forward}"
@@ -73,12 +74,17 @@ def get_pressure():
         "timezone": "auto",
     }
 
-    # Retry up to 2 times with increasing timeout
+    # Retry up to 2 times with increasing timeout, respect 429 backoff
     last_error = None
     for attempt in range(3):
         try:
             timeout = 10 + attempt * 5  # 10s, 15s, 20s
             resp = requests.get(url, params=params, timeout=timeout)
+            if resp.status_code == 429:
+                wait = min(5 * (attempt + 1), 15)
+                logging.warning(f"Rate limited (429), waiting {wait}s...")
+                time.sleep(wait)
+                continue
             resp.raise_for_status()
             data = resp.json()
 
