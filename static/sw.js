@@ -1,4 +1,4 @@
-const CACHE_NAME = 'bp-tracker-v5';
+const CACHE_NAME = 'bp-tracker-v6';
 const STATIC_ASSETS = [
   '/',
   '/static/icon.svg',
