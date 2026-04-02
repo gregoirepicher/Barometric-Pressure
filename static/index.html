@@ -620,16 +620,15 @@
 
             // --- Plugins ---
 
-            // Alternating day bands
-            const dayBandsPlugin = {
-                id: 'dayBands',
+            // Alternating day bands — background shading drawn early
+            const dayBandsBgPlugin = {
+                id: 'dayBandsBg',
                 beforeDraw(chart) {
                     const { ctx, chartArea, scales } = chart;
                     const xScale = scales.x;
                     const firstTime = new Date(times[0]);
                     const lastTime = new Date(times[times.length - 1]);
 
-                    // Find the start of the first day (midnight)
                     const dayStart = new Date(firstTime);
                     dayStart.setHours(0, 0, 0, 0);
 
@@ -645,31 +644,68 @@
                         const x2 = Math.min(xScale.getPixelForValue(nextDay), chartArea.right);
 
                         if (x2 > chartArea.left && x1 < chartArea.right) {
-                            if (dayIndex % 2 === 0) {
-                                ctx.fillStyle = 'rgba(148, 163, 184, 0.04)';
-                            } else {
-                                ctx.fillStyle = 'rgba(148, 163, 184, 0.09)';
-                            }
+                            ctx.fillStyle = dayIndex % 2 === 0
+                                ? 'rgba(148, 163, 184, 0.04)'
+                                : 'rgba(148, 163, 184, 0.09)';
                             ctx.fillRect(x1, chartArea.top, x2 - x1, chartArea.bottom - chartArea.top);
+                        }
 
-                            // Two-line day label: "Mon" on top, "Mar 29" below
+                        day = nextDay;
+                        dayIndex++;
+                    }
+                    ctx.restore();
+                }
+            };
+
+            // Day labels drawn LAST (afterDraw) so they're always on top
+            const dayLabelsPlugin = {
+                id: 'dayLabels',
+                afterDraw(chart) {
+                    const { ctx, chartArea, scales } = chart;
+                    const xScale = scales.x;
+                    const firstTime = new Date(times[0]);
+                    const lastTime = new Date(times[times.length - 1]);
+
+                    const dayStart = new Date(firstTime);
+                    dayStart.setHours(0, 0, 0, 0);
+
+                    let day = new Date(dayStart);
+                    let dayIndex = 0;
+                    const fs = getScaledFont(13);
+
+                    ctx.save();
+                    while (day < lastTime) {
+                        const nextDay = new Date(day);
+                        nextDay.setDate(nextDay.getDate() + 1);
+
+                        const x1 = Math.max(xScale.getPixelForValue(day), chartArea.left);
+                        const x2 = Math.min(xScale.getPixelForValue(nextDay), chartArea.right);
+
+                        if (x2 > chartArea.left && x1 < chartArea.right && x2 - x1 > 30) {
                             const labelX = (x1 + x2) / 2;
-                            const fs = getScaledFont(12);
-                            if (x2 - x1 > 30) {
-                                const dayName = day.toLocaleDateString('en-US', { weekday: 'short' });
-                                const datePart = day.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-                                ctx.textAlign = 'center';
+                            const dayName = day.toLocaleDateString('en-US', { weekday: 'short' });
+                            const datePart = day.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                            ctx.textAlign = 'center';
 
-                                // Day name (bold)
-                                ctx.fillStyle = '#94a3b8';
-                                ctx.font = `bold ${fs}px -apple-system, sans-serif`;
-                                ctx.fillText(dayName, labelX, chartArea.top + fs + 4);
+                            // Semi-transparent background pill for readability
+                            const pillW = Math.max(ctx.measureText(datePart).width, ctx.measureText(dayName).width) + 16;
+                            const pillH = fs * 2 + 12;
+                            const pillX = labelX - pillW / 2;
+                            const pillY = chartArea.top + 4;
+                            ctx.fillStyle = 'rgba(15, 23, 42, 0.7)';
+                            ctx.beginPath();
+                            ctx.roundRect(pillX, pillY, pillW, pillH, 6);
+                            ctx.fill();
 
-                                // Date (lighter)
-                                ctx.fillStyle = '#64748b';
-                                ctx.font = `${fs - 1}px -apple-system, sans-serif`;
-                                ctx.fillText(datePart, labelX, chartArea.top + fs * 2 + 6);
-                            }
+                            // Day name (bold, brighter)
+                            ctx.fillStyle = '#cbd5e1';
+                            ctx.font = `bold ${fs}px -apple-system, sans-serif`;
+                            ctx.fillText(dayName, labelX, pillY + fs + 2);
+
+                            // Date (lighter)
+                            ctx.fillStyle = '#94a3b8';
+                            ctx.font = `${fs - 1}px -apple-system, sans-serif`;
+                            ctx.fillText(datePart, labelX, pillY + fs * 2 + 4);
                         }
 
                         day = nextDay;
@@ -782,6 +818,11 @@
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
+                    layout: {
+                        padding: {
+                            top: getScaledFont(13) * 2 + 20,  // Reserve space for day labels
+                        }
+                    },
                     interaction: {
                         mode: 'index',
                         intersect: false,
@@ -858,7 +899,7 @@
                         }
                     }
                 },
-                plugins: [dayBandsPlugin, coloredFillPlugin, nowLinePlugin],
+                plugins: [dayBandsBgPlugin, coloredFillPlugin, nowLinePlugin, dayLabelsPlugin],
             });
         }
 
