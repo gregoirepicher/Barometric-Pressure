@@ -534,7 +534,7 @@
                 }
             }
 
-            // All retries failed — try localStorage
+            // All retries failed — try localStorage first
             console.error('All attempts failed:', lastError);
             const cached = loadFromLocal();
             if (cached) {
@@ -543,9 +543,14 @@
                 renderChart(cached.data);
                 updateStatus(cached.data);
             } else {
-                showStatus('error', 'Unable to load pressure data. Will retry automatically...');
-                // Auto-retry after 30 seconds
-                setTimeout(loadData, 30000);
+                const isRateLimit = lastError && lastError.message &&
+                    lastError.message.toLowerCase().includes('rate limit');
+                const msg = isRateLimit
+                    ? 'Weather data service is temporarily busy. Will retry in 2 minutes...'
+                    : 'Unable to load pressure data. Will retry automatically...';
+                showStatus('error', msg);
+                // Retry after 2 min for rate limits, 30 sec otherwise
+                setTimeout(loadData, isRateLimit ? 120000 : 30000);
             }
         }
 
