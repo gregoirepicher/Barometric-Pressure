@@ -425,8 +425,13 @@
         });
 
         async function searchCity(query) {
-            const resp = await fetch(`/api/geocode?name=${encodeURIComponent(query)}`);
-            const data = await resp.json();
+            const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(query)}&count=10&language=en&format=json`;
+            const resp = await fetch(url);
+            const raw = await resp.json();
+            const data = { results: (raw.results || []).map(r => ({
+                name: r.name, country: r.country || '', admin1: r.admin1 || '',
+                latitude: r.latitude, longitude: r.longitude,
+            }))};
             cityDropdown.innerHTML = '';
 
             if (data.results.length === 0) {
@@ -490,34 +495,35 @@
         }
 
         // --- Chart ---
+        // Call Open-Meteo directly from the browser (CORS supported)
+        // This avoids Render's shared IP being rate-limited
         async function loadData() {
-            const params = new URLSearchParams({
-                lat: currentCity.lat,
-                lon: currentCity.lon,
-                days_back: DAYS_BACK,
-                days_forward: DAYS_FORWARD,
-            });
+            const url = `https://api.open-meteo.com/v1/forecast?latitude=${currentCity.lat}&longitude=${currentCity.lon}&hourly=surface_pressure&past_days=${DAYS_BACK}&forecast_days=${DAYS_FORWARD + 1}&timezone=auto`;
 
             showStatus('loading', 'Loading pressure data...');
 
-            // Retry up to 3 times with backoff
             let lastError = null;
             for (let attempt = 0; attempt < 3; attempt++) {
                 try {
                     const controller = new AbortController();
-                    const timeout = setTimeout(() => controller.abort(), 15000);
-                    const resp = await fetch(`/api/pressure?${params}`, { signal: controller.signal });
-                    clearTimeout(timeout);
+                    const timeoutId = setTimeout(() => controller.abort(), 12000);
+                    const resp = await fetch(url, { signal: controller.signal });
+                    clearTimeout(timeoutId);
 
                     if (!resp.ok) {
-                        throw new Error(`Server returned ${resp.status}`);
+                        throw new Error(`API returned ${resp.status}`);
                     }
 
-                    const data = await resp.json();
-
-                    if (data.error) {
-                        throw new Error(data.error);
-                    }
+                    const raw = await resp.json();
+                    const hourly = raw.hourly || {};
+                    const data = {
+                        times: hourly.time || [],
+                        pressures: hourly.surface_pressure || [],
+                        timezone: raw.timezone || 'UTC',
+                        latitude: raw.latitude,
+                        longitude: raw.longitude,
+                        elevation: raw.elevation,
+                    };
 
                     lastLoadedData = data;
                     renderChart(data);
@@ -534,7 +540,7 @@
                 }
             }
 
-            // All retries failed — try localStorage first
+            // All retries failed — try localStorage
             console.error('All attempts failed:', lastError);
             const cached = loadFromLocal();
             if (cached) {
@@ -543,14 +549,8 @@
                 renderChart(cached.data);
                 updateStatus(cached.data);
             } else {
-                const isRateLimit = lastError && lastError.message &&
-                    lastError.message.toLowerCase().includes('rate limit');
-                const msg = isRateLimit
-                    ? 'Weather data service is temporarily busy. Will retry in 2 minutes...'
-                    : 'Unable to load pressure data. Will retry automatically...';
-                showStatus('error', msg);
-                // Retry after 2 min for rate limits, 30 sec otherwise
-                setTimeout(loadData, isRateLimit ? 120000 : 30000);
+                showStatus('error', 'Unable to load pressure data. Will retry automatically...');
+                setTimeout(loadData, 30000);
             }
         }
 

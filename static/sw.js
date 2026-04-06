@@ -1,4 +1,4 @@
-const CACHE_NAME = 'bp-tracker-v10';
+const CACHE_NAME = 'bp-tracker-v11';
 const STATIC_ASSETS = [
   '/',
   '/static/icon.svg',
@@ -32,7 +32,7 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
   // API calls: always go to network, no caching
-  if (url.pathname.startsWith('/api/')) {
+  if (url.pathname.startsWith('/api/') || url.hostname.includes('open-meteo.com')) {
     event.respondWith(fetch(event.request));
     return;
   }
