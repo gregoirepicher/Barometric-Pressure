@@ -74,45 +74,37 @@ def get_pressure():
         "timezone": "auto",
     }
 
-    # Retry up to 2 times with increasing timeout, respect 429 backoff
-    last_error = None
-    for attempt in range(3):
-        try:
-            timeout = 10 + attempt * 5  # 10s, 15s, 20s
-            resp = requests.get(url, params=params, timeout=timeout)
-            if resp.status_code == 429:
-                wait = min(5 * (attempt + 1), 15)
-                logging.warning(f"Rate limited (429), waiting {wait}s...")
-                time.sleep(wait)
-                continue
-            resp.raise_for_status()
-            data = resp.json()
+    # Try once — if rate-limited or failed, serve stale cache immediately
+    # (no sleeping inside a request handler — that blocks gunicorn)
+    try:
+        resp = requests.get(url, params=params, timeout=8)
+        if resp.status_code == 429:
+            logging.warning("Rate limited by Open-Meteo (429)")
+            stale = _cache.get(cache_key)
+            if stale:
+                return jsonify(stale["data"])
+            return jsonify({"error": "Rate limited. Please try again shortly."}), 429
+        resp.raise_for_status()
+        data = resp.json()
 
-            hourly = data.get("hourly", {})
-            result = {
-                "times": hourly.get("time", []),
-                "pressures": hourly.get("surface_pressure", []),
-                "timezone": data.get("timezone", "UTC"),
-                "latitude": data.get("latitude"),
-                "longitude": data.get("longitude"),
-                "elevation": data.get("elevation"),
-            }
-            cache_set(cache_key, result)
-            return jsonify(result)
-        except Exception as e:
-            last_error = e
-            logging.warning(f"Open-Meteo attempt {attempt + 1} failed: {e}")
-            if attempt < 2:
-                time.sleep(1)
-
-    # All retries failed — return stale cache if available
-    stale = _cache.get(cache_key)
-    if stale:
-        logging.info("Serving stale cache after API failure")
-        return jsonify(stale["data"])
-
-    # No cache at all — return error
-    return jsonify({"error": str(last_error)}), 502
+        hourly = data.get("hourly", {})
+        result = {
+            "times": hourly.get("time", []),
+            "pressures": hourly.get("surface_pressure", []),
+            "timezone": data.get("timezone", "UTC"),
+            "latitude": data.get("latitude"),
+            "longitude": data.get("longitude"),
+            "elevation": data.get("elevation"),
+        }
+        cache_set(cache_key, result)
+        return jsonify(result)
+    except Exception as e:
+        logging.warning(f"Open-Meteo request failed: {e}")
+        stale = _cache.get(cache_key)
+        if stale:
+            logging.info("Serving stale cache after API failure")
+            return jsonify(stale["data"])
+        return jsonify({"error": str(e)}), 502
 
 
 @app.route("/api/geocode")
