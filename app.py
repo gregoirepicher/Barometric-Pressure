@@ -3,31 +3,51 @@ import requests
 from datetime import datetime, timedelta
 import time
 import logging
+import json
+import os
 
 app = Flask(__name__, static_folder="static")
 logging.basicConfig(level=logging.INFO)
 
-# --- Simple in-memory cache ---
-# Caches Open-Meteo responses for 10 minutes to avoid hammering the API
-# and to serve data quickly even if Open-Meteo has a brief hiccup.
-_cache = {}
-CACHE_TTL = 1800  # 30 minutes — pressure data doesn't change that fast
+# --- File-backed cache ---
+# Survives Render restarts so we don't hammer Open-Meteo on every cold start.
+CACHE_TTL = 3600       # 1 hour — plenty fresh for hourly pressure data
+CACHE_FILE = "/tmp/bp_cache.json"
 
+def _load_cache():
+    try:
+        with open(CACHE_FILE, "r") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+def _save_cache(cache):
+    try:
+        with open(CACHE_FILE, "w") as f:
+            json.dump(cache, f)
+    except Exception as e:
+        logging.warning(f"Could not save cache: {e}")
 
 def cache_get(key):
-    entry = _cache.get(key)
+    cache = _load_cache()
+    entry = cache.get(key)
     if entry and time.time() - entry["ts"] < CACHE_TTL:
         return entry["data"]
     return None
 
-
 def cache_set(key, data):
-    _cache[key] = {"data": data, "ts": time.time()}
-    # Evict old entries to prevent unbounded growth
+    cache = _load_cache()
+    cache[key] = {"data": data, "ts": time.time()}
+    # Evict entries older than 3x TTL
     now = time.time()
-    stale = [k for k, v in _cache.items() if now - v["ts"] > CACHE_TTL * 3]
-    for k in stale:
-        del _cache[k]
+    cache = {k: v for k, v in cache.items() if now - v["ts"] < CACHE_TTL * 3}
+    _save_cache(cache)
+
+def cache_get_stale(key):
+    """Return cached data regardless of age — used as last resort fallback."""
+    cache = _load_cache()
+    entry = cache.get(key)
+    return entry["data"] if entry else None
 
 
 @app.route("/")
@@ -80,10 +100,10 @@ def get_pressure():
         resp = requests.get(url, params=params, timeout=8)
         if resp.status_code == 429:
             logging.warning("Rate limited by Open-Meteo (429)")
-            stale = _cache.get(cache_key)
+            stale = cache_get_stale(cache_key)
             if stale:
-                return jsonify(stale["data"])
-            return jsonify({"error": "Rate limited. Please try again shortly."}), 429
+                return jsonify(stale)
+            return jsonify({"error": "Rate limited. Please try again in a few minutes."}), 429
         resp.raise_for_status()
         data = resp.json()
 
@@ -100,10 +120,10 @@ def get_pressure():
         return jsonify(result)
     except Exception as e:
         logging.warning(f"Open-Meteo request failed: {e}")
-        stale = _cache.get(cache_key)
+        stale = cache_get_stale(cache_key)
         if stale:
             logging.info("Serving stale cache after API failure")
-            return jsonify(stale["data"])
+            return jsonify(stale)
         return jsonify({"error": str(e)}), 502
 
 
