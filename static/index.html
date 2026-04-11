@@ -179,6 +179,29 @@
             touch-action: none;   /* Prevent browser pinch-zoom on the chart */
         }
 
+        /* Point info panel (below chart) */
+        .point-info {
+            background: #1e293b;
+            border: 1px solid #475569;
+            border-radius: 10px;
+            padding: 10px 16px;
+            margin-top: 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: calc(14px * var(--ui-scale));
+            gap: 12px;
+        }
+
+        .point-info-time {
+            color: #f8fafc;
+            font-weight: 600;
+        }
+
+        .point-info-value {
+            color: #e2e8f0;
+        }
+
         /* Status indicators */
         .status-bar {
             display: flex;
@@ -347,6 +370,10 @@
 
         <div class="chart-wrapper">
             <canvas id="pressureChart" height="400"></canvas>
+        </div>
+        <div id="pointInfo" class="point-info" style="display:none;">
+            <span id="pointInfoTime" class="point-info-time"></span>
+            <span id="pointInfoValue" class="point-info-value"></span>
         </div>
         <div class="chart-legend">
             <span class="legend-item"><span class="legend-swatch" style="background:#34d399"></span> Stable / Rising</span>
@@ -591,33 +618,6 @@
             };
         }
 
-        // Custom tooltip positioner: place above or below the point
-        // depending on which side has more room
-        Chart.Tooltip.positioners.smartPosition = function(elements, eventPosition) {
-            if (!elements.length) return false;
-
-            const el = elements[0];
-            const chartArea = el.element.$context.chart.chartArea;
-            const pointY = el.element.y;
-
-            // Space above vs below the data point
-            const spaceAbove = pointY - chartArea.top;
-            const spaceBelow = chartArea.bottom - pointY;
-
-            let y;
-            if (spaceAbove > spaceBelow) {
-                // Place tooltip above the point
-                y = pointY - 80;
-            } else {
-                // Place tooltip below the point
-                y = pointY + 20;
-            }
-
-            // Clamp within chart area
-            y = Math.max(chartArea.top + 5, Math.min(y, chartArea.bottom - 40));
-
-            return { x: el.element.x, y: y };
-        };
 
         function renderChart(data) {
             const ctx = document.getElementById('pressureChart').getContext('2d');
@@ -847,37 +847,39 @@
                             display: false,
                         },
                         tooltip: {
-                            backgroundColor: '#1e293b',
-                            borderColor: '#475569',
-                            borderWidth: 1,
-                            titleColor: '#f8fafc',
-                            bodyColor: '#e2e8f0',
-                            titleFont: { size: getScaledFont(13) },
-                            bodyFont: { size: getScaledFont(13) },
-                            padding: 12,
-                            position: 'smartPosition',
-                            caretSize: 8,
-                            callbacks: {
-                                title: (items) => {
-                                    const d = new Date(items[0].parsed.x);
-                                    return d.toLocaleDateString('en-US', {
-                                        weekday: 'short', month: 'short', day: 'numeric',
-                                        hour: 'numeric', minute: '2-digit'
-                                    });
-                                },
-                                label: (item) => {
-                                    const val = item.parsed.y;
-                                    const idx = item.dataIndex;
-                                    let changeStr = '';
-                                    if (idx >= 3 && pressures[idx] !== null && pressures[idx - 3] !== null) {
-                                        const change = pressures[idx] - pressures[idx - 3];
-                                        const arrow = change >= 0 ? '\u2191' : '\u2193';
-                                        changeStr = `  (${arrow} ${Math.abs(change).toFixed(1)} over 3h)`;
-                                    }
-                                    const rating = ratings[idx];
-                                    const ratingLabel = rating === 'bad' ? ' \u26a0\ufe0f' : rating === 'moderate' ? ' \u25b2' : '';
-                                    return `${val.toFixed(1)} hPa${changeStr}${ratingLabel}`;
+                            enabled: false,
+                            external: function(context) {
+                                const infoEl = document.getElementById('pointInfo');
+                                const timeEl = document.getElementById('pointInfoTime');
+                                const valueEl = document.getElementById('pointInfoValue');
+
+                                const tooltipModel = context.tooltip;
+                                if (tooltipModel.opacity === 0 || !tooltipModel.dataPoints || !tooltipModel.dataPoints.length) {
+                                    infoEl.style.display = 'none';
+                                    return;
                                 }
+
+                                const item = tooltipModel.dataPoints[0];
+                                const d = new Date(item.parsed.x);
+                                const timeStr = d.toLocaleDateString('en-US', {
+                                    weekday: 'short', month: 'short', day: 'numeric',
+                                    hour: 'numeric', minute: '2-digit'
+                                });
+
+                                const val = item.parsed.y;
+                                const idx = item.dataIndex;
+                                let changeStr = '';
+                                if (idx >= 3 && pressures[idx] !== null && pressures[idx - 3] !== null) {
+                                    const change = pressures[idx] - pressures[idx - 3];
+                                    const arrow = change >= 0 ? '\u2191' : '\u2193';
+                                    changeStr = `  (${arrow} ${Math.abs(change).toFixed(1)} over 3h)`;
+                                }
+                                const rating = ratings[idx];
+                                const ratingLabel = rating === 'bad' ? ' \u26a0\ufe0f' : rating === 'moderate' ? ' \u25b2' : '';
+
+                                timeEl.textContent = timeStr;
+                                valueEl.textContent = `${val.toFixed(1)} hPa${changeStr}${ratingLabel}`;
+                                infoEl.style.display = 'flex';
                             }
                         },
                         zoom: {
