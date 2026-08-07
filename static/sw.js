@@ -1,8 +1,10 @@
-const CACHE_NAME = 'bp-tracker-v13';
+const CACHE_NAME = 'bp-tracker-v14';
 const STATIC_ASSETS = [
   '/',
   '/icon.svg',
   '/manifest.json',
+  '/symptoms.css',
+  '/symptoms.js',
   'https://cdn.jsdelivr.net/npm/chart.js@4',
   'https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3',
   'https://cdn.jsdelivr.net/npm/hammerjs@2',

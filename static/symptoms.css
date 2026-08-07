@@ -1,0 +1,706 @@
+/* ==========================================================================
+   Symptom log — tabs, calendar, and day-entry sheet
+   Palette matches the pressure view (slate/indigo on #0f172a).
+   All font sizes scale with --ui-scale so the text-size control works here too.
+   ========================================================================== */
+
+/* --- Tab bar --- */
+.tab-bar {
+    display: flex;
+    gap: 8px;
+    justify-content: center;
+    margin-bottom: 20px;
+}
+
+/* Repeated taps shouldn't start selecting label text */
+.tab-btn, .seg button, .cal-nav button, .cal-day, .week-row, .scale button {
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+.tab-btn {
+    flex: 0 1 200px;
+    padding: 12px 20px;
+    border-radius: 12px;
+    border: 1px solid #334155;
+    background: #1e293b;
+    color: #94a3b8;
+    font-family: inherit;
+    font-size: calc(15px * var(--ui-scale));
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.tab-btn:hover { border-color: #475569; }
+
+.tab-btn.active {
+    background: #6366f1;
+    border-color: #818cf8;
+    color: #ffffff;
+}
+
+/* --- Symptoms view shell --- */
+.symptoms-wrap {
+    max-width: 640px;
+    margin: 0 auto;
+}
+
+.log-summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 12px;
+    padding: 12px 16px;
+    margin-bottom: 18px;
+    flex-wrap: wrap;
+}
+
+.log-summary .count {
+    font-size: calc(13px * var(--ui-scale));
+    color: #94a3b8;
+}
+
+.log-summary .count strong {
+    color: #f8fafc;
+    font-size: calc(15px * var(--ui-scale));
+}
+
+.btn-primary {
+    padding: 10px 18px;
+    border-radius: 10px;
+    border: none;
+    background: #6366f1;
+    color: #ffffff;
+    font-family: inherit;
+    font-size: calc(14px * var(--ui-scale));
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.btn-primary:hover { background: #4f46e5; }
+
+.btn-secondary {
+    padding: 10px 18px;
+    border-radius: 10px;
+    border: 1px solid #475569;
+    background: transparent;
+    color: #cbd5e1;
+    font-family: inherit;
+    font-size: calc(14px * var(--ui-scale));
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.btn-secondary:hover { background: #1e293b; }
+
+.btn-danger {
+    padding: 10px 18px;
+    border-radius: 10px;
+    border: 1px solid rgba(220, 38, 38, 0.4);
+    background: transparent;
+    color: #fca5a5;
+    font-family: inherit;
+    font-size: calc(14px * var(--ui-scale));
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.btn-danger:hover { background: rgba(220, 38, 38, 0.12); }
+
+/* --- Backup nudge + export card --- */
+.backup-nudge {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+    background: rgba(251, 191, 36, 0.12);
+    border: 1px solid rgba(251, 191, 36, 0.3);
+    border-radius: 12px;
+    padding: 12px 16px;
+    margin-bottom: 16px;
+    color: #fde68a;
+    font-size: calc(13px * var(--ui-scale));
+    line-height: 1.45;
+}
+
+.backup-nudge span { flex: 1; min-width: 160px; }
+
+.backup-card {
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 12px;
+    padding: 16px;
+    margin-top: 22px;
+}
+
+.backup-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+}
+
+.backup-title {
+    font-size: calc(14px * var(--ui-scale));
+    font-weight: 700;
+    color: #f8fafc;
+}
+
+.backup-when {
+    font-size: calc(12px * var(--ui-scale));
+    color: #64748b;
+}
+
+.backup-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.backup-actions button { flex: 0 1 auto; }
+
+.backup-hint {
+    margin-top: 12px;
+    font-size: calc(12px * var(--ui-scale));
+    color: #64748b;
+    line-height: 1.55;
+}
+
+.backup-hint strong { color: #94a3b8; font-weight: 600; }
+
+/* --- Calendar header --- */
+.cal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 14px;
+    flex-wrap: wrap;
+}
+
+.cal-nav {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+/* Direct children only — the month/week toggle nests its own buttons in here
+   and must keep its natural width. */
+.cal-nav > button {
+    flex-shrink: 0;
+    white-space: nowrap;
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
+    border: 1px solid #334155;
+    background: #1e293b;
+    color: #cbd5e1;
+    font-size: calc(18px * var(--ui-scale));
+    font-weight: 700;
+    line-height: 1;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.cal-nav > button:hover { background: #334155; }
+.seg button:hover { background: #263449; }
+
+.cal-title {
+    font-size: calc(17px * var(--ui-scale));
+    font-weight: 700;
+    color: #f8fafc;
+    min-width: 150px;
+    text-align: center;
+}
+
+/* Segmented month/week toggle */
+.seg {
+    display: inline-flex;
+    flex-shrink: 0;
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 10px;
+    overflow: hidden;
+}
+
+.seg button {
+    flex-shrink: 0;
+    white-space: nowrap;
+    padding: 9px 16px;
+    background: transparent;
+    border: none;
+    color: #94a3b8;
+    font-family: inherit;
+    font-size: calc(13px * var(--ui-scale));
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+}
+
+.seg button.active {
+    background: #334155;
+    color: #f8fafc;
+}
+
+/* --- Month grid --- */
+.cal-grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 6px;
+}
+
+.cal-dow {
+    text-align: center;
+    font-size: calc(11px * var(--ui-scale));
+    color: #64748b;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 4px 0;
+}
+
+.cal-day {
+    aspect-ratio: 1 / 1;
+    border-radius: 10px;
+    border: 1px solid #334155;
+    background: #1e293b;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1px;
+    padding: 2px;
+    position: relative;
+    cursor: pointer;
+    transition: border-color 0.15s;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.cal-day:hover { border-color: #64748b; }
+
+.cal-day .dnum {
+    font-size: calc(15px * var(--ui-scale));
+    font-weight: 600;
+    color: #e2e8f0;
+    line-height: 1.1;
+}
+
+.cal-day .dscore {
+    font-size: calc(12px * var(--ui-scale));
+    font-weight: 800;
+    line-height: 1.1;
+}
+
+/* Days outside the displayed month, and days in the future */
+.cal-day.out,
+.cal-day.future {
+    opacity: 0.28;
+    cursor: default;
+}
+
+.cal-day.out:hover,
+.cal-day.future:hover { border-color: #334155; }
+
+/* Ring via box-shadow, not border-color: logged days set border-color as an
+   inline style (which would win), and today must stay marked either way. */
+.cal-day.today {
+    box-shadow: 0 0 0 2px #fbbf24;
+}
+
+.cal-day.today:hover { box-shadow: 0 0 0 2px #fbbf24; }
+
+/* "+" affordance on days that can still be logged but have no entry yet */
+.cal-day.can-add::after {
+    content: '+';
+    position: absolute;
+    top: 1px;
+    right: 5px;
+    color: #818cf8;
+    font-size: calc(14px * var(--ui-scale));
+    font-weight: 700;
+    line-height: 1;
+}
+
+/* --- Week list --- */
+.week-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.week-row {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 12px;
+    padding: 12px 14px;
+    cursor: pointer;
+    transition: border-color 0.15s;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.week-row:hover { border-color: #64748b; }
+
+.week-row.future { opacity: 0.35; cursor: default; }
+.week-row.future:hover { border-color: #334155; }
+.week-row.today { border-color: #fbbf24; }
+
+.week-date {
+    min-width: 52px;
+    text-align: center;
+    flex-shrink: 0;
+}
+
+.week-date .wd {
+    font-size: calc(11px * var(--ui-scale));
+    color: #64748b;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.week-date .dd {
+    font-size: calc(20px * var(--ui-scale));
+    font-weight: 700;
+    color: #f8fafc;
+    line-height: 1.15;
+}
+
+.week-scores {
+    display: flex;
+    gap: 12px;
+    flex: 1;
+    flex-wrap: wrap;
+}
+
+.mini { text-align: center; min-width: 38px; }
+
+.mini .k {
+    font-size: calc(10px * var(--ui-scale));
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    display: block;
+}
+
+.mini .v {
+    font-size: calc(16px * var(--ui-scale));
+    font-weight: 800;
+    line-height: 1.2;
+}
+
+.week-empty {
+    flex: 1;
+    font-size: calc(13px * var(--ui-scale));
+    color: #64748b;
+}
+
+.week-note {
+    font-size: calc(12px * var(--ui-scale));
+    color: #94a3b8;
+    margin-top: 4px;
+    width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* --- Calendar legend --- */
+.cal-key {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    margin-top: 16px;
+    font-size: calc(11px * var(--ui-scale));
+    color: #64748b;
+    flex-wrap: wrap;
+}
+
+.cal-key .bar {
+    display: flex;
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.cal-key .bar span {
+    width: 18px;
+    height: 10px;
+    display: block;
+}
+
+/* --- Day sheet --- */
+.sheet-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(2, 6, 23, 0.72);
+    z-index: 200;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s;
+}
+
+.sheet-backdrop.open {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.sheet {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    margin: 0 auto;
+    max-width: 600px;
+    max-height: 92vh;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    background: #0f172a;
+    border: 1px solid #334155;
+    border-bottom: none;
+    border-radius: 18px 18px 0 0;
+    z-index: 201;
+    transform: translateY(100%);
+    transition: transform 0.24s ease;
+    padding: 8px 20px calc(24px + env(safe-area-inset-bottom));
+}
+
+.sheet.open { transform: translateY(0); }
+
+.sheet-grip {
+    width: 44px;
+    height: 4px;
+    border-radius: 2px;
+    background: #475569;
+    margin: 6px auto 14px;
+}
+
+.sheet-title {
+    font-size: calc(18px * var(--ui-scale));
+    font-weight: 700;
+    color: #f8fafc;
+    margin-bottom: 2px;
+}
+
+.sheet-sub {
+    font-size: calc(12px * var(--ui-scale));
+    color: #64748b;
+    margin-bottom: 20px;
+}
+
+.sheet-msg {
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 12px;
+    padding: 20px;
+    text-align: center;
+    color: #94a3b8;
+    font-size: calc(14px * var(--ui-scale));
+    margin-bottom: 20px;
+    line-height: 1.5;
+}
+
+/* --- Question blocks --- */
+.q { margin-bottom: 20px; }
+
+.q-label {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 10px;
+    font-size: calc(14px * var(--ui-scale));
+    font-weight: 600;
+    color: #f8fafc;
+    margin-bottom: 8px;
+}
+
+.q-answer {
+    font-size: calc(13px * var(--ui-scale));
+    font-weight: 800;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.q-answer.unset {
+    color: #64748b;
+    font-weight: 500;
+}
+
+.scale {
+    display: flex;
+    gap: 4px;
+}
+
+.scale button {
+    flex: 1;
+    min-width: 0;
+    height: 44px;
+    padding: 0;
+    border-radius: 8px;
+    border: 1px solid #334155;
+    background: #1e293b;
+    color: #94a3b8;
+    font-family: inherit;
+    font-size: calc(13px * var(--ui-scale));
+    font-weight: 700;
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.scale button:hover { background: #334155; }
+
+.scale button.sel {
+    color: #ffffff;
+    border-color: transparent;
+}
+
+.scale-ends {
+    display: flex;
+    justify-content: space-between;
+    font-size: calc(11px * var(--ui-scale));
+    color: #64748b;
+    margin-top: 5px;
+}
+
+/* Read-only score rows */
+.ro-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 12px;
+    padding: 11px 0;
+    border-bottom: 1px solid #1e293b;
+}
+
+.ro-row .k {
+    font-size: calc(14px * var(--ui-scale));
+    color: #cbd5e1;
+}
+
+.ro-row .v {
+    font-size: calc(15px * var(--ui-scale));
+    font-weight: 800;
+    white-space: nowrap;
+}
+
+.ro-row .v .word {
+    font-size: calc(12px * var(--ui-scale));
+    font-weight: 500;
+    color: #94a3b8;
+    margin-left: 6px;
+}
+
+/* --- Notes --- */
+.notes-label {
+    font-size: calc(14px * var(--ui-scale));
+    font-weight: 600;
+    color: #f8fafc;
+    margin-bottom: 8px;
+    display: block;
+}
+
+.sheet textarea {
+    width: 100%;
+    min-height: 90px;
+    padding: 12px 14px;
+    border-radius: 10px;
+    border: 1px solid #334155;
+    background: #1e293b;
+    color: #f8fafc;
+    font-family: inherit;
+    font-size: calc(14px * var(--ui-scale));
+    line-height: 1.5;
+    resize: vertical;
+    outline: none;
+}
+
+.sheet textarea:focus { border-color: #6366f1; }
+
+.ro-notes {
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 10px;
+    padding: 12px 14px;
+    font-size: calc(14px * var(--ui-scale));
+    color: #e2e8f0;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+/* --- Pressure context strip inside the sheet --- */
+.sheet-pressure {
+    display: flex;
+    gap: 16px;
+    justify-content: center;
+    background: rgba(99, 102, 241, 0.08);
+    border: 1px solid rgba(99, 102, 241, 0.2);
+    border-radius: 10px;
+    padding: 10px 14px;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+}
+
+.sheet-pressure .p {
+    text-align: center;
+}
+
+.sheet-pressure .p .k {
+    display: block;
+    font-size: calc(10px * var(--ui-scale));
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.sheet-pressure .p .v {
+    font-size: calc(14px * var(--ui-scale));
+    font-weight: 700;
+    color: #c7d2fe;
+}
+
+/* --- Sheet actions --- */
+.sheet-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 24px;
+    align-items: center;
+}
+
+.sheet-actions .spacer { flex: 1; }
+
+.sheet-actions .btn-primary,
+.sheet-actions .btn-secondary { min-width: 90px; }
+
+/* Narrow phones: keep the 1-10 scale usable */
+@media (max-width: 400px) {
+    .scale { gap: 3px; }
+    .scale button { font-size: calc(12px * var(--ui-scale)); }
+    .tab-btn { padding: 12px 12px; }
+}
+
+/* Below this the two nav clusters can't share a row; stack them cleanly
+   instead of letting the month/week toggle get squeezed. */
+@media (max-width: 520px) {
+    .cal-header {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 10px;
+    }
+
+    .cal-header .cal-nav { justify-content: space-between; }
+    .cal-title { flex: 1; min-width: 0; }
+}

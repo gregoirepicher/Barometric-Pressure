@@ -18,6 +18,7 @@
     <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
     <script src="https://cdn.jsdelivr.net/npm/hammerjs@2"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2"></script>
+    <link rel="stylesheet" href="/symptoms.css">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -345,16 +346,15 @@
     <div class="container">
         <header>
             <h1>Barometric Pressure Tracker</h1>
-            <p>Monitor pressure changes that may trigger migraines</p>
+            <p id="headerSub">Monitor pressure changes that may trigger migraines</p>
         </header>
 
-        <div class="city-search">
-            <input type="text" id="cityInput" placeholder="Search city... (default: Toronto)" autocomplete="off">
-            <div class="dropdown" id="cityDropdown"></div>
-        </div>
+        <nav class="tab-bar">
+            <button type="button" class="tab-btn active" id="tabPressure">Pressure</button>
+            <button type="button" class="tab-btn" id="tabSymptoms">Symptoms</button>
+        </nav>
 
-        <div id="alertBanner" class="alert-banner"></div>
-
+        <!-- Text size is global: it applies to both tabs via --ui-scale -->
         <div class="controls">
             <div class="range-group">
                 <label>Text Size</label>
@@ -364,6 +364,16 @@
                 </div>
             </div>
         </div>
+
+        <div id="pressureView">
+
+        <div class="city-search">
+            <input type="text" id="cityInput" placeholder="Search city... (default: Toronto)" autocomplete="off">
+            <div class="dropdown" id="cityDropdown"></div>
+        </div>
+
+        <div id="alertBanner" class="alert-banner"></div>
+
         <p class="chart-hint">Pinch to zoom &bull; Drag to pan &bull; Double-tap to reset</p>
 
         <div id="dataStatus" class="data-status" style="display:none;"></div>
@@ -404,6 +414,66 @@
                 <div class="detail" id="trendDetail"></div>
             </div>
         </div>
+
+        </div><!-- /#pressureView -->
+
+        <div id="symptomsView" style="display:none;">
+            <div class="symptoms-wrap">
+                <div class="backup-nudge" id="backupNudge" style="display:none;"></div>
+
+                <div class="log-summary">
+                    <span class="count" id="logCount"><strong>0</strong> days logged</span>
+                    <button type="button" class="btn-primary" id="logTodayBtn">Log today</button>
+                </div>
+
+                <div class="cal-header">
+                    <div class="cal-nav">
+                        <button type="button" id="calPrev" aria-label="Previous">&lsaquo;</button>
+                        <span class="cal-title" id="calTitle"></span>
+                        <button type="button" id="calNext" aria-label="Next">&rsaquo;</button>
+                    </div>
+                    <div class="cal-nav">
+                        <button type="button" id="calToday" style="width:auto;padding:0 14px;font-size:calc(13px * var(--ui-scale))">Today</button>
+                        <span class="seg">
+                            <button type="button" id="segMonth" class="active">Month</button>
+                            <button type="button" id="segWeek">Week</button>
+                        </span>
+                    </div>
+                </div>
+
+                <div id="calBody"></div>
+
+                <div class="backup-card">
+                    <div class="backup-head">
+                        <span class="backup-title">Backup &amp; export</span>
+                        <span class="backup-when" id="backupWhen"></span>
+                    </div>
+                    <div class="backup-actions">
+                        <button type="button" class="btn-primary" id="shareBackupBtn">Send backup</button>
+                        <button type="button" class="btn-secondary" id="downloadJsonBtn">JSON</button>
+                        <button type="button" class="btn-secondary" id="downloadCsvBtn">CSV</button>
+                        <button type="button" class="btn-secondary" id="restoreBtn">Restore</button>
+                        <input type="file" id="restoreInput" accept=".json,application/json" hidden>
+                    </div>
+                    <p class="backup-hint">
+                        <strong>Send backup</strong> attaches your log to an email or message.
+                        <strong>JSON</strong> is the file you restore from; <strong>CSV</strong> opens in
+                        Excel for sharing with a doctor. Restoring merges &mdash; it never erases
+                        entries already on this device.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Day entry sheet -->
+    <div class="sheet-backdrop" id="sheetBackdrop"></div>
+    <div class="sheet" id="daySheet" role="dialog" aria-modal="true">
+        <div class="sheet-grip"></div>
+        <div class="sheet-title" id="sheetTitle"></div>
+        <div class="sheet-sub" id="sheetSub"></div>
+        <div id="sheetBody"></div>
+        <div class="sheet-actions" id="sheetActions"></div>
     </div>
 
     <script>
@@ -1096,6 +1166,61 @@
             }
         }
 
+        // --- Hooks for the symptom log (symptoms.js) ---
+
+        // Summarise the loaded pressure series for one local calendar date.
+        // Stamped onto symptom entries at save time: Open-Meteo only serves a
+        // rolling window, so this can't be recovered after the fact.
+        // Returns null when the date falls outside the fetched range.
+        window.getPressureSummaryForDate = function (dateKey) {
+            if (!lastLoadedData || !lastLoadedData.times) return null;
+
+            const idx = [];
+            lastLoadedData.times.forEach((t, i) => {
+                // Times are local ISO strings ("2026-08-06T13:00") because the
+                // request uses timezone=auto, so a prefix compare is safe.
+                if (String(t).slice(0, 10) === dateKey) idx.push(i);
+            });
+            if (!idx.length) return null;
+
+            const p = lastLoadedData.pressures;
+            const vals = idx.map(i => p[i]).filter(v => v !== null && v !== undefined);
+            if (!vals.length) return null;
+
+            const min = Math.min(...vals);
+            const max = Math.max(...vals);
+            const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
+
+            // Sharpest 3-hour fall touching this day — the rate of change is
+            // what matters for migraines, not the absolute level.
+            let maxDrop3h = 0;
+            for (const i of idx) {
+                const j = i - 3;
+                if (j >= 0 && p[i] !== null && p[j] !== null) {
+                    const delta = p[i] - p[j];
+                    if (delta < maxDrop3h) maxDrop3h = delta;
+                }
+            }
+
+            return {
+                min: +min.toFixed(1),
+                max: +max.toFixed(1),
+                mean: +mean.toFixed(1),
+                range: +(max - min).toFixed(1),
+                maxDrop3h: +maxDrop3h.toFixed(1),
+                city: currentCity.name,
+                lat: currentCity.lat,
+                lon: currentCity.lon,
+                capturedAt: new Date().toISOString(),
+            };
+        };
+
+        // The chart measures its container; while the tab is hidden that width
+        // is 0, so it needs a resize once the tab becomes visible again.
+        window.onPressureTabShown = function () {
+            if (chart) chart.resize();
+        };
+
         // --- Init ---
         loadData();
 
@@ -1108,5 +1233,6 @@
             });
         }
     </script>
+    <script src="/symptoms.js"></script>
 </body>
 </html>

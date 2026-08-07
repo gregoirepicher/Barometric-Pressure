@@ -22,6 +22,18 @@ def health():
     return jsonify({"status": "ok", "timestamp": datetime.utcnow().isoformat()})
 
 
+@app.route("/<path:filename>")
+def root_assets(filename):
+    """Serve static files from the root path.
+
+    Production is a static host where everything sits at the root, so the page
+    references /symptoms.css, /manifest.json, /icon.svg etc. without a prefix.
+    This mirrors that layout for local dev. Registered last so the explicit
+    routes above always win.
+    """
+    return send_from_directory("static", filename)
+
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     debug = os.environ.get("FLASK_ENV") != "production"
