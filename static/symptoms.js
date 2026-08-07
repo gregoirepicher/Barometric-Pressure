@@ -292,21 +292,21 @@
 
     let recognition = null;
     let listening = false;
-    let stoppedByUser = false;
     let dictationFatal = false;
-    let restartCount = 0;
 
     // The most recent not-yet-finalised transcript. It's shown in the status
     // line but deliberately kept out of the textarea until the engine commits
     // it -- otherwise the field churns as the guess is revised. The catch is
     // that stopping or saving before that happens would silently discard words
-    // the user can see on screen, so stopDictation() flushes this.
+    // the user can see on screen, so finishDictation() flushes this.
     let pendingInterim = '';
 
-    // Mobile engines stop on their own after a pause. Restarting keeps a slow
-    // speaker from being cut off mid-thought, but needs a ceiling so a
-    // persistent failure can't spin forever.
-    const MAX_RESTARTS = 60;
+    // How many entries of `event.results` have already been written into the
+    // note. The results list is cumulative and an already-final entry can be
+    // reported again by a later event, so this -- not event.resultIndex -- is
+    // what stops the same phrase being appended twice. resultIndex marks where
+    // the engine changed something, which is not the same as "not yet seen".
+    let committedResults = 0;
 
     function micButtonHtml() {
         return '<button type="button" class="mic-btn" id="micBtn" aria-label="Dictate notes">'
@@ -351,10 +351,9 @@
     function startDictation() {
         if (!SPEECH_SUPPORTED || listening) return;
 
-        stoppedByUser = false;
         dictationFatal = false;
-        restartCount = 0;
         pendingInterim = '';
+        committedResults = 0;
 
         recognition = new SpeechRecognitionCtor();
         recognition.lang = navigator.language || 'en-US';
@@ -362,16 +361,24 @@
         recognition.interimResults = true;
 
         recognition.onresult = (event) => {
-            restartCount = 0;  // real speech: reset the runaway guard
             let interim = '';
-            for (let i = event.resultIndex; i < event.results.length; i++) {
+
+            // Walk the whole cumulative list every time and rely on
+            // committedResults for what's new. Starting from event.resultIndex
+            // re-appended phrases the engine had already finalised, which is
+            // what produced words repeating over and over.
+            for (let i = 0; i < event.results.length; i++) {
                 const result = event.results[i];
                 if (result.isFinal) {
-                    appendToNotes(result[0].transcript);
+                    if (i >= committedResults) {
+                        appendToNotes(result[0].transcript);
+                        committedResults = i + 1;
+                    }
                 } else {
                     interim += result[0].transcript;
                 }
             }
+
             // Anything finalised above is already in the field, so this also
             // clears itself back to '' and can't be committed twice.
             pendingInterim = interim;
@@ -393,17 +400,13 @@
             // 'no-speech' and 'aborted' are routine; onend decides what happens.
         };
 
+        // No auto-restart. Restarting on every pause meant the engine replayed
+        // its start-of-listening chime again and again, and each new session
+        // reset the results list, which compounded the duplication. Ending
+        // cleanly and letting the user tap again is quieter and predictable.
         recognition.onend = () => {
-            if (listening && !stoppedByUser && !dictationFatal && restartCount < MAX_RESTARTS) {
-                restartCount++;
-                try {
-                    recognition.start();
-                    return;
-                } catch (e) { /* fall through and stop cleanly */ }
-            }
-            listening = false;
-            updateMicUi();
-            if (!dictationFatal) setMicStatus('');
+            if (!listening) return;  // stopDictation() already wrapped up
+            finishDictation('Paused — tap Speak to carry on.');
         };
 
         try {
@@ -418,12 +421,8 @@
         }
     }
 
-    function stopDictation() {
-        stoppedByUser = true;
-        if (recognition) {
-            try { recognition.stop(); } catch (e) { /* already stopped */ }
-        }
-
+    // Single exit point, whether the user stopped it or the engine gave up.
+    function finishDictation(statusText) {
         // Commit whatever was still mid-recognition. Stopping doesn't reliably
         // deliver a final result before the caller reads the field, so without
         // this the last spoken phrase -- visible on screen the whole time --
@@ -435,7 +434,16 @@
 
         listening = false;
         updateMicUi();
-        setMicStatus('');
+        // Don't paper over a permission or network error with a routine message.
+        if (!dictationFatal) setMicStatus(statusText || '');
+    }
+
+    function stopDictation() {
+        if (!listening) return;
+        if (recognition) {
+            try { recognition.stop(); } catch (e) { /* already stopped */ }
+        }
+        finishDictation('');
     }
 
     function toggleDictation() {
