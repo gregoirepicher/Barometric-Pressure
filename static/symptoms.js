@@ -12,10 +12,14 @@
 
     // --- Config -----------------------------------------------------------
 
-    // How many days back from today can still be created/edited.
-    // 1 = today and yesterday. Raise this if backfilling after a bad stretch
-    // becomes necessary — nothing else needs to change.
-    const EDITABLE_DAYS_BACK = 1;
+    // Any past day can be created or edited — there is no cutoff. A bad stretch
+    // can leave several days unrecorded, and backfilling them later is worth
+    // more than enforcing recency.
+    //
+    // This constant now only controls the "+" hint on the calendar, not
+    // permission: without a limit, every past day would carry one and the
+    // month would be a wall of plus signs.
+    const RECENT_PROMPT_DAYS = 1;
 
     const STORE_KEY = 'bp_symptom_log_v1';
     const TAB_KEY = 'bp_active_tab';
@@ -79,9 +83,15 @@
         return Math.round((startOfToday() - parseKey(key)) / 86400000);
     }
 
+    // Every day up to and including today can be logged or edited.
     function isEditable(key) {
+        return !isFuture(key);
+    }
+
+    // Only drives the "+" nudge on recent days you'd most likely want to fill.
+    function isRecent(key) {
         const ago = daysAgo(key);
-        return ago >= 0 && ago <= EDITABLE_DAYS_BACK;
+        return ago >= 0 && ago <= RECENT_PROMPT_DAYS;
     }
 
     function isFuture(key) {
@@ -286,6 +296,13 @@
     let dictationFatal = false;
     let restartCount = 0;
 
+    // The most recent not-yet-finalised transcript. It's shown in the status
+    // line but deliberately kept out of the textarea until the engine commits
+    // it -- otherwise the field churns as the guess is revised. The catch is
+    // that stopping or saving before that happens would silently discard words
+    // the user can see on screen, so stopDictation() flushes this.
+    let pendingInterim = '';
+
     // Mobile engines stop on their own after a pause. Restarting keeps a slow
     // speaker from being cut off mid-thought, but needs a ceiling so a
     // persistent failure can't spin forever.
@@ -337,6 +354,7 @@
         stoppedByUser = false;
         dictationFatal = false;
         restartCount = 0;
+        pendingInterim = '';
 
         recognition = new SpeechRecognitionCtor();
         recognition.lang = navigator.language || 'en-US';
@@ -354,6 +372,9 @@
                     interim += result[0].transcript;
                 }
             }
+            // Anything finalised above is already in the field, so this also
+            // clears itself back to '' and can't be committed twice.
+            pendingInterim = interim;
             setMicStatus(interim ? '“' + interim + '…”' : 'Listening…');
         };
 
@@ -402,6 +423,16 @@
         if (recognition) {
             try { recognition.stop(); } catch (e) { /* already stopped */ }
         }
+
+        // Commit whatever was still mid-recognition. Stopping doesn't reliably
+        // deliver a final result before the caller reads the field, so without
+        // this the last spoken phrase -- visible on screen the whole time --
+        // would vanish on save.
+        if (pendingInterim) {
+            appendToNotes(pendingInterim);
+            pendingInterim = '';
+        }
+
         listening = false;
         updateMicUi();
         setMicStatus('');
@@ -788,7 +819,7 @@
             if (!inMonth) classes.push('out');
             if (isFuture(key)) classes.push('future');
             if (key === todayKey) classes.push('today');
-            if (inMonth && !entry && isEditable(key)) classes.push('can-add');
+            if (inMonth && !entry && isRecent(key)) classes.push('can-add');
 
             let style = '';
             let score = '';
@@ -860,7 +891,7 @@
             } else if (future) {
                 right = '<div class="week-empty">—</div>';
             } else {
-                right = `<div class="week-empty">${isEditable(key) ? 'Tap to add a log' : 'No log recorded'}</div>`;
+                right = '<div class="week-empty">Tap to add a log</div>';
             }
 
             const rel = relativeDayName(key);
@@ -883,7 +914,6 @@
     function openSheet(key) {
         sheetKey = key;
         const entry = Store.get(key);
-        const editable = isEditable(key);
         const d = parseKey(key);
         const rel = relativeDayName(key);
 
@@ -895,11 +925,9 @@
             draft[q.key] = entry && typeof entry[q.key] === 'number' ? entry[q.key] : null;
         });
 
-        if (editable) {
-            renderEditForm(entry);
-        } else {
-            renderReadOnly(entry, key);
-        }
+        // Every day the calendar lets you open is editable now, so there is
+        // only one form. Future days aren't clickable and never reach here.
+        renderEditForm(entry);
 
         el.backdrop.classList.add('open');
         el.sheet.classList.add('open');
@@ -963,6 +991,15 @@
                 + 'Your phone keyboard\'s microphone key still works.</div>')
             + '</div>';
 
+        // Now that older days open straight into the form, say when the entry
+        // was last written — useful context before changing an old record.
+        const when = entry && entry.updatedAt ? new Date(entry.updatedAt) : null;
+        if (when) {
+            html += '<div class="sheet-sub" style="margin-top:4px;margin-bottom:0">'
+                + `Last saved ${when.toLocaleDateString()} at `
+                + `${when.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</div>`;
+        }
+
         el.sheetBody.innerHTML = html;
 
         el.sheetActions.innerHTML =
@@ -970,41 +1007,6 @@
             + '<div class="spacer"></div>'
             + '<button type="button" class="btn-secondary" id="cancelEntry">Cancel</button>'
             + `<button type="button" class="btn-primary" id="saveEntry">${entry ? 'Update' : 'Save'}</button>`;
-    }
-
-    function renderReadOnly(entry, key) {
-        if (!entry) {
-            const ago = daysAgo(key);
-            el.sheetBody.innerHTML = '<div class="sheet-msg">No log was recorded for this day.<br>'
-                + `Logs can only be added for today and yesterday — this day was ${ago} days ago.</div>`;
-            el.sheetActions.innerHTML = '<div class="spacer"></div>'
-                + '<button type="button" class="btn-secondary" id="cancelEntry">Close</button>';
-            return;
-        }
-
-        let html = pressureStripHtml(key);
-        QUESTIONS.forEach(q => {
-            const v = entry[q.key];
-            const val = (v === null || v === undefined)
-                ? '<span style="color:#64748b;font-weight:500">Not answered</span>'
-                : `<span style="color:${scoreText(v)}">${v}</span>`;
-            html += `<div class="ro-row"><span class="k">${q.short}</span><span class="v">${val}</span></div>`;
-        });
-
-        if (entry.notes) {
-            html += `<div class="q" style="margin-top:20px"><span class="notes-label">Notes</span>`
-                + `<div class="ro-notes">${escapeHtml(entry.notes)}</div></div>`;
-        }
-
-        const when = entry.updatedAt ? new Date(entry.updatedAt) : null;
-        if (when) {
-            html += `<div class="sheet-sub" style="margin-top:16px;margin-bottom:0">`
-                + `Recorded ${when.toLocaleDateString()} at ${when.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</div>`;
-        }
-
-        el.sheetBody.innerHTML = html;
-        el.sheetActions.innerHTML = '<div class="spacer"></div>'
-            + '<button type="button" class="btn-secondary" id="cancelEntry">Close</button>';
     }
 
     function saveEntry() {

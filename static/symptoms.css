@@ -500,18 +500,6 @@
     margin-bottom: 20px;
 }
 
-.sheet-msg {
-    background: #1e293b;
-    border: 1px solid #334155;
-    border-radius: 12px;
-    padding: 20px;
-    text-align: center;
-    color: #94a3b8;
-    font-size: calc(14px * var(--ui-scale));
-    margin-bottom: 20px;
-    line-height: 1.5;
-}
-
 /* --- Question blocks --- */
 .q { margin-bottom: 20px; }
 
@@ -573,27 +561,6 @@
     font-size: calc(11px * var(--ui-scale));
     color: #64748b;
     margin-top: 5px;
-}
-
-/* Read-only score rows */
-.ro-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-    gap: 12px;
-    padding: 11px 0;
-    border-bottom: 1px solid #1e293b;
-}
-
-.ro-row .k {
-    font-size: calc(14px * var(--ui-scale));
-    color: #cbd5e1;
-}
-
-.ro-row .v {
-    font-size: calc(15px * var(--ui-scale));
-    font-weight: 800;
-    white-space: nowrap;
 }
 
 /* --- Notes --- */
@@ -680,18 +647,6 @@
 }
 
 .sheet textarea:focus { border-color: #6366f1; }
-
-.ro-notes {
-    background: #1e293b;
-    border: 1px solid #334155;
-    border-radius: 10px;
-    padding: 12px 14px;
-    font-size: calc(14px * var(--ui-scale));
-    color: #e2e8f0;
-    line-height: 1.5;
-    white-space: pre-wrap;
-    word-break: break-word;
-}
 
 /* --- Pressure context strip inside the sheet --- */
 .sheet-pressure {
