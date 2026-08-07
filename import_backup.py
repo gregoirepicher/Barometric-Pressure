@@ -27,11 +27,17 @@ from datetime import datetime, timezone
 
 ARCHIVE_PATH = os.path.join("data", "symptom-history.json")
 ARCHIVE_KIND = "bp-symptom-log-archive"
-SCHEMA_VERSION = 1
+
+# v2: every question runs 0 (best) to 10 (worst). v1 mixed directions and ran
+# 1-10. Mirrors the migration in static/symptoms.js.
+SCHEMA_VERSION = 2
 
 # Must stay in step with QUESTIONS in static/symptoms.js. Adding a question
 # there means adding it here, otherwise the CSV silently drops the column.
 QUESTION_KEYS = ["headPain", "bodyPain", "cognitive", "ambulatory", "overall"]
+
+# Questions whose v1 scale ran the opposite way (10 was best).
+V1_INVERTED_KEYS = {"cognitive", "ambulatory", "overall"}
 
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
@@ -78,35 +84,73 @@ def looks_like_entry(key, entry):
     return has_score or isinstance(entry.get("notes"), str)
 
 
-def read_entries(path):
-    """Pull the entries map out of a backup file.
+def count_of(n, one, many):
+    return f"{n} {one if n == 1 else many}"
 
-    Accepts a full backup ({"kind": ..., "entries": {...}}) or a bare
+
+def clamp_score(value):
+    return max(0, min(10, int(round(value))))
+
+
+def migrate_v1_entries(entries):
+    """Convert a v1 (1-10, mixed direction) map to v2 (0-10, 10 always worst).
+
+    Reinterpreting rather than converting would invert meaning: an old
+    "cognitive ability 9" (nearly normal) would read as "difficulty 9"
+    (severely impaired). Mirrors migrateV1ToV2() in static/symptoms.js.
+    """
+    out = {}
+    for key, src in entries.items():
+        if not isinstance(src, dict):
+            continue
+        entry = dict(src)
+        for q in QUESTION_KEYS:
+            v = src.get(q)
+            if not isinstance(v, (int, float)) or isinstance(v, bool):
+                entry[q] = None
+            elif q in V1_INVERTED_KEYS:
+                entry[q] = clamp_score(10 - v)
+            else:
+                entry[q] = clamp_score(v - 1)
+        entry["migratedFrom"] = "v1"
+        out[key] = entry
+    return out
+
+
+def _unwrap(parsed, source):
+    """Return (entries, schema) from a backup or archive payload.
+
+    Accepts a full file ({"kind": ..., "entries": {...}}) or a bare
     {"YYYY-MM-DD": {...}} map, matching what the browser importer accepts.
     """
+    if isinstance(parsed, dict) and isinstance(parsed.get("entries"), dict):
+        return parsed["entries"], parsed.get("schema") or parsed.get("version")
+    if isinstance(parsed, dict):
+        # A hand-made bare map carries no version. Assuming the current schema
+        # is the safer default -- guessing v1 would invert correct data.
+        warn(f"  ? {os.path.basename(source)}: no schema field; assuming v{SCHEMA_VERSION}")
+        return parsed, SCHEMA_VERSION
+    raise ValueError("expected a JSON object, got a " + type(parsed).__name__)
+
+
+def read_entries(path):
     with open(path, "r", encoding="utf-8-sig") as fh:
         try:
             parsed = json.load(fh)
         except json.JSONDecodeError as exc:
             raise ValueError(f"not valid JSON ({exc.msg} at line {exc.lineno})")
-
-    if isinstance(parsed, dict) and isinstance(parsed.get("entries"), dict):
-        return parsed["entries"]
-    if isinstance(parsed, dict):
-        return parsed
-    raise ValueError("expected a JSON object, got a " + type(parsed).__name__)
+    return _unwrap(parsed, path)
 
 
 def load_archive(path):
     if not os.path.exists(path):
-        return {}
+        return {}, SCHEMA_VERSION
     with open(path, "r", encoding="utf-8-sig") as fh:
         parsed = json.load(fh)
-    if isinstance(parsed, dict) and isinstance(parsed.get("entries"), dict):
-        return parsed["entries"]
-    if isinstance(parsed, dict):
-        return parsed
-    raise ValueError(f"{path} is not a readable archive")
+    try:
+        return _unwrap(parsed, path)
+    except ValueError:
+        raise ValueError(f"{path} is not a readable archive")
 
 
 def merge(archive, incoming, source, stats):
@@ -254,13 +298,20 @@ def main(argv=None):
     args = parser.parse_args(argv)
 
     try:
-        archive = load_archive(args.archive)
+        archive, archive_schema = load_archive(args.archive)
     except (ValueError, json.JSONDecodeError) as exc:
         warn(f"Could not read archive {args.archive}: {exc}")
         return 1
 
     before = len(archive)
-    print(f"Archive: {args.archive} ({before} days)")
+    print(f"Archive: {args.archive} ({count_of(before, 'day', 'days')})")
+
+    archive_migrated = False
+    if archive and (archive_schema or 1) < SCHEMA_VERSION:
+        archive = migrate_v1_entries(archive)
+        archive_migrated = True
+        print(f"  * archive was v{archive_schema}; converted "
+              f"{count_of(len(archive), 'entry', 'entries')} to the 0-10 scale")
 
     stats = {"added": [], "updated": [], "unchanged": [],
              "conflicts": [], "skipped": []}
@@ -268,7 +319,7 @@ def main(argv=None):
 
     for path in args.backups:
         try:
-            incoming = read_entries(path)
+            incoming, schema = read_entries(path)
         except FileNotFoundError:
             warn(f"  ! {path}: no such file")
             continue
@@ -277,7 +328,14 @@ def main(argv=None):
             continue
 
         read_any = True
-        print(f"  + {os.path.basename(path)} ({len(incoming)} entries)")
+        note = ""
+        if (schema or 1) < SCHEMA_VERSION:
+            # Convert before merging, or the newest-wins comparison would be
+            # picking between two different scales.
+            incoming = migrate_v1_entries(incoming)
+            note = f"  [v{schema} -> v{SCHEMA_VERSION}]"
+        print(f"  + {os.path.basename(path)} "
+              f"({count_of(len(incoming), 'entry', 'entries')}){note}")
         merge(archive, incoming, path, stats)
 
     if not read_any:
@@ -291,7 +349,10 @@ def main(argv=None):
         print("\nDry run - nothing written.")
         return 0
 
-    if not changed:
+    # A schema conversion is itself a change worth persisting, even when no
+    # entries were added -- otherwise the archive stays on the old scale and
+    # the conversion is silently redone on every future run.
+    if not changed and not archive_migrated:
         print("\nNothing to write.")
         return 0
 

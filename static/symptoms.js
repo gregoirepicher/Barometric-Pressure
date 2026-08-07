@@ -19,27 +19,29 @@
 
     const STORE_KEY = 'bp_symptom_log_v1';
     const TAB_KEY = 'bp_active_tab';
-    const SCHEMA_VERSION = 1;
 
-    // Word labels for each point on the 1-10 scale (index 0 === score 1).
-    const PAIN_WORDS = ['None', 'Very mild', 'Mild', 'Noticeable', 'Moderate',
-        'Strong', 'Severe', 'Very severe', 'Extreme', 'Worst imaginable'];
-    const ABILITY_WORDS = ['None', 'Very poor', 'Poor', 'Limited', 'Fair',
-        'Moderate', 'Good', 'Very good', 'Near normal', 'Full / normal'];
-    const DAY_WORDS = ['Terrible', 'Very bad', 'Bad', 'Poor', 'Mixed',
-        'OK', 'Good', 'Very good', 'Great', 'Excellent'];
+    // v2: every question runs 0 (best) to 10 (worst). v1 mixed directions and
+    // ran 1-10; migrateV1ToV2() converts old entries on load.
+    const SCHEMA_VERSION = 2;
 
-    // `polarity` says which end of the scale is the good end, which drives
-    // both the colour and how the calendar reads at a glance.
-    //   'bad'  -> 10 is the worst outcome (pain)
-    //   'good' -> 10 is the best outcome (ability, overall day)
+    const SCALE_MIN = 0;
+    const SCALE_MAX = 10;
+
+    // Every question now runs the same way: 0 = nothing wrong, 10 = as bad as
+    // it gets. The two ability questions are phrased as difficulty rather than
+    // ability so the wording matches the numbers -- inverting the scale without
+    // rewording would have made "10 = worst cognitive ability" read backwards.
     const QUESTIONS = [
-        { key: 'headPain', label: 'How would you rate your head pain?', short: 'Head', polarity: 'bad', low: 'None', high: 'Worst', words: PAIN_WORDS },
-        { key: 'bodyPain', label: 'How would you rate your body pain?', short: 'Body', polarity: 'bad', low: 'None', high: 'Worst', words: PAIN_WORDS },
-        { key: 'cognitive', label: 'How would you rate your cognitive ability?', short: 'Mind', polarity: 'good', low: 'Unable', high: 'Full', words: ABILITY_WORDS },
-        { key: 'ambulatory', label: 'How would you rate your ambulatory ability?', short: 'Moving', polarity: 'good', low: 'Unable', high: 'Full', words: ABILITY_WORDS },
-        { key: 'overall', label: 'How would you rate the day overall?', short: 'Overall', polarity: 'good', low: 'Terrible', high: 'Excellent', words: DAY_WORDS },
+        { key: 'headPain', label: 'How bad was your head pain?', short: 'Head', low: 'None', high: 'Worst' },
+        { key: 'bodyPain', label: 'How bad was your body pain?', short: 'Body', low: 'None', high: 'Worst' },
+        { key: 'cognitive', label: 'How much difficulty thinking clearly?', short: 'Mind', low: 'None', high: 'Unable' },
+        { key: 'ambulatory', label: 'How much difficulty moving around?', short: 'Moving', low: 'None', high: 'Unable' },
+        { key: 'overall', label: 'How bad was the day overall?', short: 'Overall', low: 'Fine', high: 'Worst' },
     ];
+
+    // Questions whose v1 scale ran the opposite way (10 was best) and so need
+    // inverting when migrating old entries.
+    const V1_INVERTED_KEYS = ['cognitive', 'ambulatory', 'overall'];
 
     const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
     const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June',
@@ -100,19 +102,57 @@
 
     // --- Colour -----------------------------------------------------------
 
-    // Map a 1-10 score to a hue, 0 (red) through 140 (green), respecting
-    // which end of that particular scale is the good end.
-    function scoreHue(v, polarity) {
-        const good = polarity === 'good' ? (v - 1) / 9 : (10 - v) / 9;
-        return Math.round(good * 140);
+    // Every scale now runs the same way, so one mapping serves them all:
+    // 0 -> green, 10 -> red.
+    function scoreHue(v) {
+        return Math.round(((SCALE_MAX - v) / SCALE_MAX) * 140);
     }
 
-    function scoreFill(v, polarity, alpha) {
-        return `hsla(${scoreHue(v, polarity)}, 68%, 45%, ${alpha})`;
+    function scoreFill(v, alpha) {
+        return `hsla(${scoreHue(v)}, 68%, 45%, ${alpha})`;
     }
 
-    function scoreText(v, polarity) {
-        return `hsl(${scoreHue(v, polarity)}, 72%, 62%)`;
+    function scoreText(v) {
+        return `hsl(${scoreHue(v)}, 72%, 62%)`;
+    }
+
+    // --- Schema migration -------------------------------------------------
+
+    // v1 ran 1-10 with mixed directions; v2 runs 0-10 with 10 always worst.
+    // Converting rather than reinterpreting matters: leaving an old "cognitive
+    // ability 9" (nearly normal) in place would silently become "difficulty 9"
+    // (severely impaired) -- the opposite of what was recorded.
+    //
+    //   pain-type      1..10 (1 = none)  ->  0..9  via v - 1
+    //   inverted-type  1..10 (10 = best) ->  0..9  via 10 - v
+    //
+    // Both preserve ordering and anchor "nothing wrong" at 0. Neither reaches
+    // 10, which is correct: nobody was ever offered the new top of the scale.
+    function migrateV1ToV2(oldEntries) {
+        const out = {};
+        Object.keys(oldEntries).forEach((key) => {
+            const src = oldEntries[key];
+            if (!src || typeof src !== 'object') return;
+
+            const entry = Object.assign({}, src);
+            QUESTIONS.forEach((q) => {
+                const v = src[q.key];
+                if (typeof v !== 'number') {
+                    entry[q.key] = null;
+                    return;
+                }
+                entry[q.key] = V1_INVERTED_KEYS.indexOf(q.key) !== -1
+                    ? clampScore(10 - v)
+                    : clampScore(v - 1);
+            });
+            entry.migratedFrom = 'v1';
+            out[key] = entry;
+        });
+        return out;
+    }
+
+    function clampScore(v) {
+        return Math.max(SCALE_MIN, Math.min(SCALE_MAX, Math.round(v)));
     }
 
     // --- Store ------------------------------------------------------------
@@ -131,11 +171,17 @@
                 if (raw) {
                     const parsed = JSON.parse(raw);
                     if (parsed && typeof parsed === 'object' && parsed.entries) {
+                        const version = parsed.version || 1;
                         this._data = {
-                            version: parsed.version || 1,
-                            entries: parsed.entries,
+                            version: SCHEMA_VERSION,
+                            entries: version < 2
+                                ? migrateV1ToV2(parsed.entries)
+                                : parsed.entries,
                             lastBackupAt: parsed.lastBackupAt || null,
                         };
+                        // Write the converted values back immediately, so a
+                        // half-migrated log can't exist if the tab is closed.
+                        if (version < 2) this.persist();
                         return this._data;
                     }
                 }
@@ -747,8 +793,8 @@
             let style = '';
             let score = '';
             if (entry && entry.overall !== null && entry.overall !== undefined) {
-                style = ` style="background:${scoreFill(entry.overall, 'good', 0.3)};border-color:${scoreFill(entry.overall, 'good', 0.55)}"`;
-                score = `<span class="dscore" style="color:${scoreText(entry.overall, 'good')}">${entry.overall}</span>`;
+                style = ` style="background:${scoreFill(entry.overall, 0.3)};border-color:${scoreFill(entry.overall, 0.55)}"`;
+                score = `<span class="dscore" style="color:${scoreText(entry.overall)}">${entry.overall}</span>`;
             } else if (entry) {
                 // Logged, but the overall question was left unanswered.
                 style = ' style="background:rgba(148,163,184,0.14)"';
@@ -767,10 +813,11 @@
 
     function monthKeyHtml() {
         let bar = '';
-        for (let v = 1; v <= 10; v++) {
-            bar += `<span style="background:${scoreFill(v, 'good', 0.75)}"></span>`;
+        for (let v = SCALE_MIN; v <= SCALE_MAX; v++) {
+            bar += `<span style="background:${scoreFill(v, 0.75)}"></span>`;
         }
-        return `<div class="cal-key"><span>Worse day</span><span class="bar">${bar}</span><span>Better day</span></div>`;
+        return `<div class="cal-key"><span>0 &middot; Fine</span><span class="bar">${bar}</span>`
+            + '<span>Worst &middot; 10</span></div>';
     }
 
     function renderWeek() {
@@ -803,7 +850,7 @@
                     const v = entry[q.key];
                     const shown = (v === null || v === undefined)
                         ? '<span style="color:#475569">–</span>'
-                        : `<span style="color:${scoreText(v, q.polarity)}">${v}</span>`;
+                        : `<span style="color:${scoreText(v)}">${v}</span>`;
                     minis += `<div class="mini"><span class="k">${q.short}</span><span class="v">${shown}</span></div>`;
                 });
                 const note = entry.notes
@@ -887,19 +934,22 @@
 
         QUESTIONS.forEach(q => {
             const v = draft[q.key];
+            // No word label for the chosen number -- the highlighted button
+            // already says which one it is. Only the unanswered state needs
+            // spelling out, since that isn't visible from the buttons.
             html += `<div class="q" data-q="${q.key}">`
                 + `<div class="q-label"><span>${q.label}</span>`
-                + `<span class="q-answer ${v === null ? 'unset' : ''}" data-answer="${q.key}"`
-                + `${v === null ? '' : ` style="color:${scoreText(v, q.polarity)}"`}>`
-                + `${v === null ? 'Not answered' : q.words[v - 1]}</span></div>`
+                + `<span class="q-answer unset" data-answer="${q.key}">`
+                + `${v === null ? 'Not answered' : ''}</span></div>`
                 + '<div class="scale">';
-            for (let n = 1; n <= 10; n++) {
+            for (let n = SCALE_MIN; n <= SCALE_MAX; n++) {
                 const sel = v === n;
-                const style = sel ? ` style="background:${scoreFill(n, q.polarity, 0.85)}"` : '';
+                const style = sel ? ` style="background:${scoreFill(n, 0.85)}"` : '';
                 html += `<button type="button" class="${sel ? 'sel' : ''}" data-score="${n}"${style}>${n}</button>`;
             }
             html += '</div>'
-                + `<div class="scale-ends"><span>1 &middot; ${q.low}</span><span>${q.high} &middot; 10</span></div>`
+                + `<div class="scale-ends"><span>${SCALE_MIN} &middot; ${q.low}</span>`
+                + `<span>${q.high} &middot; ${SCALE_MAX}</span></div>`
                 + '</div>';
         });
 
@@ -937,7 +987,7 @@
             const v = entry[q.key];
             const val = (v === null || v === undefined)
                 ? '<span style="color:#64748b;font-weight:500">Not answered</span>'
-                : `<span style="color:${scoreText(v, q.polarity)}">${v}<span class="word">${q.words[v - 1]}</span></span>`;
+                : `<span style="color:${scoreText(v)}">${v}</span>`;
             html += `<div class="ro-row"><span class="k">${q.short}</span><span class="v">${val}</span></div>`;
         });
 
@@ -1077,13 +1127,11 @@
             const num = Number(btn.dataset.score);
             const sel = num === v;
             btn.classList.toggle('sel', sel);
-            btn.style.background = sel ? scoreFill(num, q.polarity, 0.85) : '';
+            btn.style.background = sel ? scoreFill(num, 0.85) : '';
         });
 
         const answer = block.querySelector('[data-answer]');
-        answer.textContent = v === null ? 'Not answered' : q.words[v - 1];
-        answer.classList.toggle('unset', v === null);
-        answer.style.color = v === null ? '' : scoreText(v, q.polarity);
+        answer.textContent = v === null ? 'Not answered' : '';
     }
 
     // --- Init -------------------------------------------------------------

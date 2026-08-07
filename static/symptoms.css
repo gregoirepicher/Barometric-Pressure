@@ -596,13 +596,6 @@
     white-space: nowrap;
 }
 
-.ro-row .v .word {
-    font-size: calc(12px * var(--ui-scale));
-    font-weight: 500;
-    color: #94a3b8;
-    margin-left: 6px;
-}
-
 /* --- Notes --- */
 .notes-head {
     display: flex;
