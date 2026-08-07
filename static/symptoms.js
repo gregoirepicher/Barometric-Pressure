@@ -225,6 +225,147 @@
         }
     }
 
+    // --- Voice dictation --------------------------------------------------
+
+    // Browser-native speech recognition: no API key, no backend, no cost, and
+    // it keeps the app a pure static site. Supported in Chrome/Edge, Android
+    // Chrome, and iOS Safari 14.5+; absent in Firefox, where the button is
+    // hidden rather than shown broken.
+    const SpeechRecognitionCtor = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const SPEECH_SUPPORTED = !!SpeechRecognitionCtor;
+
+    let recognition = null;
+    let listening = false;
+    let stoppedByUser = false;
+    let dictationFatal = false;
+    let restartCount = 0;
+
+    // Mobile engines stop on their own after a pause. Restarting keeps a slow
+    // speaker from being cut off mid-thought, but needs a ceiling so a
+    // persistent failure can't spin forever.
+    const MAX_RESTARTS = 60;
+
+    function micButtonHtml() {
+        return '<button type="button" class="mic-btn" id="micBtn" aria-label="Dictate notes">'
+            + '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">'
+            + '<path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3z"/>'
+            + '<path fill="currentColor" d="M17 11a1 1 0 1 1 2 0 7 7 0 0 1-6 6.93V21a1 1 0 1 1-2 0v-3.07A7 7 0 0 1 5 11a1 1 0 1 1 2 0 5 5 0 0 0 10 0z"/>'
+            + '</svg><span id="micLabel">Speak</span></button>';
+    }
+
+    function setMicStatus(text) {
+        const el = document.getElementById('micStatus');
+        if (el) el.textContent = text || '';
+    }
+
+    function updateMicUi() {
+        const btn = document.getElementById('micBtn');
+        const label = document.getElementById('micLabel');
+        if (!btn || !label) return;
+        btn.classList.toggle('recording', listening);
+        label.textContent = listening ? 'Stop' : 'Speak';
+        btn.setAttribute('aria-label', listening ? 'Stop dictating' : 'Dictate notes');
+    }
+
+    // Append rather than replace, so dictation never destroys typed text.
+    function appendToNotes(text) {
+        const el = document.getElementById('entryNotes');
+        if (!el) return;
+
+        let chunk = String(text).trim();
+        if (!chunk) return;
+
+        const existing = el.value.replace(/\s+$/, '');
+        // Capitalise at the start of the note and after a finished sentence,
+        // so dictated and typed text read as one piece of writing.
+        if (!existing || /[.!?]$/.test(existing)) {
+            chunk = chunk.charAt(0).toUpperCase() + chunk.slice(1);
+        }
+        el.value = existing ? existing + ' ' + chunk : chunk;
+        el.scrollTop = el.scrollHeight;
+    }
+
+    function startDictation() {
+        if (!SPEECH_SUPPORTED || listening) return;
+
+        stoppedByUser = false;
+        dictationFatal = false;
+        restartCount = 0;
+
+        recognition = new SpeechRecognitionCtor();
+        recognition.lang = navigator.language || 'en-US';
+        recognition.continuous = true;
+        recognition.interimResults = true;
+
+        recognition.onresult = (event) => {
+            restartCount = 0;  // real speech: reset the runaway guard
+            let interim = '';
+            for (let i = event.resultIndex; i < event.results.length; i++) {
+                const result = event.results[i];
+                if (result.isFinal) {
+                    appendToNotes(result[0].transcript);
+                } else {
+                    interim += result[0].transcript;
+                }
+            }
+            setMicStatus(interim ? '“' + interim + '…”' : 'Listening…');
+        };
+
+        recognition.onerror = (event) => {
+            const err = event.error;
+            if (err === 'not-allowed' || err === 'service-not-allowed') {
+                dictationFatal = true;
+                setMicStatus('Microphone access was blocked. Allow it for this site, then try again.');
+            } else if (err === 'audio-capture') {
+                dictationFatal = true;
+                setMicStatus('No microphone was found.');
+            } else if (err === 'network') {
+                dictationFatal = true;
+                setMicStatus('Dictation needs a connection and couldn\'t reach the service.');
+            }
+            // 'no-speech' and 'aborted' are routine; onend decides what happens.
+        };
+
+        recognition.onend = () => {
+            if (listening && !stoppedByUser && !dictationFatal && restartCount < MAX_RESTARTS) {
+                restartCount++;
+                try {
+                    recognition.start();
+                    return;
+                } catch (e) { /* fall through and stop cleanly */ }
+            }
+            listening = false;
+            updateMicUi();
+            if (!dictationFatal) setMicStatus('');
+        };
+
+        try {
+            recognition.start();
+            listening = true;
+            updateMicUi();
+            setMicStatus('Listening…');
+        } catch (e) {
+            listening = false;
+            updateMicUi();
+            setMicStatus('Could not start dictation.');
+        }
+    }
+
+    function stopDictation() {
+        stoppedByUser = true;
+        if (recognition) {
+            try { recognition.stop(); } catch (e) { /* already stopped */ }
+        }
+        listening = false;
+        updateMicUi();
+        setMicStatus('');
+    }
+
+    function toggleDictation() {
+        if (listening) stopDictation();
+        else startDictation();
+    }
+
     // --- Backup / export / import ----------------------------------------
 
     const BACKUP_NUDGE_DAYS = 14;
@@ -720,6 +861,10 @@
     }
 
     function closeSheet() {
+        // Always release the microphone with the sheet. Leaving it open after
+        // the UI is gone would be both a battery drain and a privacy problem.
+        if (listening) stopDictation();
+
         el.backdrop.classList.remove('open');
         el.sheet.classList.remove('open');
         document.body.style.overflow = '';
@@ -758,8 +903,15 @@
                 + '</div>';
         });
 
-        html += '<div class="q"><label class="notes-label" for="entryNotes">Notes (optional)</label>'
-            + `<textarea id="entryNotes" placeholder="Triggers, medication, sleep, anything worth remembering...">${entry ? escapeHtml(entry.notes || '') : ''}</textarea></div>`;
+        html += '<div class="q"><div class="notes-head">'
+            + '<label class="notes-label" for="entryNotes">Notes (optional)</label>'
+            + (SPEECH_SUPPORTED ? micButtonHtml() : '')
+            + '</div>'
+            + `<textarea id="entryNotes" placeholder="Triggers, medication, sleep, anything worth remembering...">${entry ? escapeHtml(entry.notes || '') : ''}</textarea>`
+            + '<div class="mic-status" id="micStatus"></div>'
+            + (SPEECH_SUPPORTED ? '' : '<div class="mic-status">Voice input isn\'t available in this browser. '
+                + 'Your phone keyboard\'s microphone key still works.</div>')
+            + '</div>';
 
         el.sheetBody.innerHTML = html;
 
@@ -806,6 +958,10 @@
     }
 
     function saveEntry() {
+        // Stop first: a pending final result would otherwise land in the
+        // textarea after we've already read it, and be lost.
+        if (listening) stopDictation();
+
         const notesEl = document.getElementById('entryNotes');
         const notes = notesEl ? notesEl.value.trim() : '';
 
@@ -867,6 +1023,12 @@
 
         // Scale buttons and sheet actions, also delegated.
         el.sheet.addEventListener('click', (e) => {
+            // Checked first: the click can land on the SVG inside the button.
+            if (e.target.closest('#micBtn')) {
+                toggleDictation();
+                return;
+            }
+
             const scoreBtn = e.target.closest('[data-score]');
             if (scoreBtn) {
                 const block = scoreBtn.closest('[data-q]');

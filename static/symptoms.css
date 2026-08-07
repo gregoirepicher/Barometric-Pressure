@@ -604,12 +604,71 @@
 }
 
 /* --- Notes --- */
+.notes-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 8px;
+}
+
 .notes-label {
     font-size: calc(14px * var(--ui-scale));
     font-weight: 600;
     color: #f8fafc;
     margin-bottom: 8px;
     display: block;
+}
+
+.notes-head .notes-label { margin-bottom: 0; }
+
+/* --- Dictation --- */
+.mic-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    flex-shrink: 0;
+    padding: 8px 14px;
+    min-height: 40px;
+    border-radius: 999px;
+    border: 1px solid #475569;
+    background: #1e293b;
+    color: #cbd5e1;
+    font-family: inherit;
+    font-size: calc(13px * var(--ui-scale));
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+.mic-btn:hover { background: #334155; }
+
+.mic-btn.recording {
+    background: #dc2626;
+    border-color: #f87171;
+    color: #ffffff;
+    animation: mic-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes mic-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.55); }
+    50%      { box-shadow: 0 0 0 7px rgba(220, 38, 38, 0); }
+}
+
+/* Users who ask for reduced motion still get the colour change */
+@media (prefers-reduced-motion: reduce) {
+    .mic-btn.recording { animation: none; }
+}
+
+.mic-status {
+    margin-top: 7px;
+    min-height: calc(17px * var(--ui-scale));
+    font-size: calc(12px * var(--ui-scale));
+    color: #94a3b8;
+    line-height: 1.45;
 }
 
 .sheet textarea {
