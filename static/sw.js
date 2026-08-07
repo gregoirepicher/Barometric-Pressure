@@ -1,4 +1,4 @@
-const CACHE_NAME = 'bp-tracker-v20';
+const CACHE_NAME = 'bp-tracker-v21';
 
 // Same-origin app files. Served network-first so a deploy lands on the next
 // open, not the one after it. The previous cache-first rule meant every update

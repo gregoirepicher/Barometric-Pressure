@@ -21,6 +21,12 @@
     // month would be a wall of plus signs.
     const RECENT_PROMPT_DAYS = 1;
 
+    // Shown at the bottom of the Symptoms tab. Purely so "which version is
+    // this phone actually running?" can be answered by looking, rather than
+    // inferred from whether a fix appears to have worked. Bump with
+    // CACHE_NAME in sw.js.
+    const APP_BUILD = 'v21';
+
     const STORE_KEY = 'bp_symptom_log_v1';
     const TAB_KEY = 'bp_active_tab';
 
@@ -301,12 +307,11 @@
     // the user can see on screen, so finishDictation() flushes this.
     let pendingInterim = '';
 
-    // How many entries of `event.results` have already been written into the
-    // note. The results list is cumulative and an already-final entry can be
-    // reported again by a later event, so this -- not event.resultIndex -- is
-    // what stops the same phrase being appended twice. resultIndex marks where
-    // the engine changed something, which is not the same as "not yet seen".
-    let committedResults = 0;
+    // The note's contents when the current dictation session began, and the
+    // finalised segments produced since. The field is rewritten from these two
+    // on every result, so the transcript can never accumulate duplicates.
+    let baseNotes = '';
+    let finalSegments = [];
 
     function micButtonHtml() {
         return '<button type="button" class="mic-btn" id="micBtn" aria-label="Dictate notes">'
@@ -330,21 +335,56 @@
         btn.setAttribute('aria-label', listening ? 'Stop dictating' : 'Dictate notes');
     }
 
-    // Append rather than replace, so dictation never destroys typed text.
-    function appendToNotes(text) {
-        const el = document.getElementById('entryNotes');
-        if (!el) return;
+    function normalise(text) {
+        return String(text).replace(/\s+/g, ' ').trim().toLowerCase();
+    }
 
-        let chunk = String(text).trim();
-        if (!chunk) return;
+    // Join the engine's final segments into one transcript.
+    //
+    // Engines differ in what a "segment" contains. Most emit each phrase once,
+    // but some re-send everything said so far in every segment, so segment 2
+    // already contains segment 1. Concatenating blindly is what repeats words
+    // the user only said once. A segment that starts with everything we have
+    // so far REPLACES it rather than being added to it. The trailing space in
+    // the prefix test keeps "the" from being swallowed by "then".
+    function joinSegments(segments) {
+        let out = '';
+        segments.forEach((segment) => {
+            const piece = String(segment).trim();
+            if (!piece) return;
+            if (!out) { out = piece; return; }
 
-        const existing = el.value.replace(/\s+$/, '');
+            const have = normalise(out);
+            const next = normalise(piece);
+            if (next === have || next.startsWith(have + ' ')) {
+                out = piece;          // cumulative engine: this supersedes
+            } else {
+                out += ' ' + piece;   // ordinary engine: genuinely new words
+            }
+        });
+        return out;
+    }
+
+    function composeNotes(transcript) {
+        const base = baseNotes.replace(/\s+$/, '');
+        let chunk = String(transcript).trim();
+        if (!chunk) return base;
         // Capitalise at the start of the note and after a finished sentence,
         // so dictated and typed text read as one piece of writing.
-        if (!existing || /[.!?]$/.test(existing)) {
+        if (!base || /[.!?]$/.test(base)) {
             chunk = chunk.charAt(0).toUpperCase() + chunk.slice(1);
         }
-        el.value = existing ? existing + ' ' + chunk : chunk;
+        return base ? base + ' ' + chunk : chunk;
+    }
+
+    // Rewrite the field from what's in the note plus the whole transcript so
+    // far. The value is a pure function of the results list, so no amount of
+    // re-reporting can duplicate anything -- which appending could never
+    // guarantee, however carefully it tracked what it had already added.
+    function writeNotes(transcript) {
+        const el = document.getElementById('entryNotes');
+        if (!el) return;
+        el.value = composeNotes(transcript);
         el.scrollTop = el.scrollHeight;
     }
 
@@ -353,7 +393,12 @@
 
         dictationFatal = false;
         pendingInterim = '';
-        committedResults = 0;
+        finalSegments = [];
+
+        // Whatever is already in the note. Dictation owns everything after it
+        // for the duration of the session.
+        const notesEl = document.getElementById('entryNotes');
+        baseNotes = notesEl ? notesEl.value : '';
 
         recognition = new SpeechRecognitionCtor();
         recognition.lang = navigator.language || 'en-US';
@@ -361,27 +406,25 @@
         recognition.interimResults = true;
 
         recognition.onresult = (event) => {
+            const finals = [];
             let interim = '';
 
-            // Walk the whole cumulative list every time and rely on
-            // committedResults for what's new. Starting from event.resultIndex
-            // re-appended phrases the engine had already finalised, which is
-            // what produced words repeating over and over.
+            // Rebuild from the full list every time rather than tracking what
+            // has already been consumed. event.results is cumulative and an
+            // engine may re-report, revise or re-send finalised segments; with
+            // a rebuild none of that can produce a repeat.
             for (let i = 0; i < event.results.length; i++) {
                 const result = event.results[i];
                 if (result.isFinal) {
-                    if (i >= committedResults) {
-                        appendToNotes(result[0].transcript);
-                        committedResults = i + 1;
-                    }
+                    finals.push(result[0].transcript);
                 } else {
                     interim += result[0].transcript;
                 }
             }
 
-            // Anything finalised above is already in the field, so this also
-            // clears itself back to '' and can't be committed twice.
+            finalSegments = finals;
             pendingInterim = interim;
+            writeNotes(joinSegments(finalSegments));
             setMicStatus(interim ? '“' + interim + '…”' : 'Listening…');
         };
 
@@ -426,10 +469,12 @@
         // Commit whatever was still mid-recognition. Stopping doesn't reliably
         // deliver a final result before the caller reads the field, so without
         // this the last spoken phrase -- visible on screen the whole time --
-        // would vanish on save.
+        // would vanish on save. joinSegments() drops it if the engine already
+        // finalised the same words.
         if (pendingInterim) {
-            appendToNotes(pendingInterim);
+            finalSegments = finalSegments.concat([pendingInterim]);
             pendingInterim = '';
+            writeNotes(joinSegments(finalSegments));
         }
 
         listening = false;
@@ -1150,6 +1195,9 @@
         cacheEls();
         wire();
         Store.load();
+
+        const buildEl = document.getElementById('appBuild');
+        if (buildEl) buildEl.textContent = `Build ${APP_BUILD}`;
 
         let saved = 'pressure';
         try { saved = localStorage.getItem(TAB_KEY) || 'pressure'; } catch (e) { /* ignore */ }

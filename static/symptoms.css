@@ -178,6 +178,14 @@
 
 .backup-hint strong { color: #94a3b8; font-weight: 600; }
 
+.app-build {
+    text-align: center;
+    margin-top: 14px;
+    font-size: calc(11px * var(--ui-scale));
+    color: #475569;
+    letter-spacing: 0.04em;
+}
+
 /* --- Calendar header --- */
 .cal-header {
     display: flex;
