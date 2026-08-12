@@ -25,7 +25,7 @@
     // this phone actually running?" can be answered by looking, rather than
     // inferred from whether a fix appears to have worked. Bump with
     // CACHE_NAME in sw.js.
-    const APP_BUILD = 'v21';
+    const APP_BUILD = 'v22';
 
     const STORE_KEY = 'bp_symptom_log_v1';
     const TAB_KEY = 'bp_active_tab';
@@ -778,6 +778,7 @@
         el.viewPressure = document.getElementById('pressureView');
         el.viewSymptoms = document.getElementById('symptomsView');
         el.headerSub = document.getElementById('headerSub');
+        el.graphHeightGroup = document.getElementById('graphHeightGroup');
 
         el.calTitle = document.getElementById('calTitle');
         el.calBody = document.getElementById('calBody');
@@ -811,6 +812,10 @@
         const symptoms = name === 'symptoms';
         el.viewPressure.style.display = symptoms ? 'none' : '';
         el.viewSymptoms.style.display = symptoms ? '' : 'none';
+        // Graph height only means anything on the Pressure tab.
+        if (el.graphHeightGroup) {
+            el.graphHeightGroup.style.display = symptoms ? 'none' : '';
+        }
         el.tabPressure.classList.toggle('active', !symptoms);
         el.tabSymptoms.classList.toggle('active', symptoms);
         el.headerSub.textContent = symptoms

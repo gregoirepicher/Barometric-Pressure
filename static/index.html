@@ -175,9 +175,24 @@
             position: relative;
         }
 
+        /* Chart.js is responsive with maintainAspectRatio off, so it fills
+           this box. Its height is what the Graph Height control changes. */
+        .chart-canvas-box {
+            position: relative;
+            width: 100%;
+            height: var(--chart-height, 400px);
+        }
+
         .chart-wrapper canvas {
             width: 100% !important;
             touch-action: none;   /* Prevent browser pinch-zoom on the chart */
+        }
+
+        .controls#displayControls {
+            margin-top: 28px;
+            margin-bottom: 0;
+            padding-top: 20px;
+            border-top: 1px solid #1e293b;
         }
 
         /* Point info panel (below chart) */
@@ -354,17 +369,6 @@
             <button type="button" class="tab-btn" id="tabSymptoms">Symptoms</button>
         </nav>
 
-        <!-- Text size is global: it applies to both tabs via --ui-scale -->
-        <div class="controls">
-            <div class="range-group">
-                <label>Text Size</label>
-                <div class="range-row">
-                    <input type="range" id="textScale" min="80" max="160" value="100" step="10">
-                    <span class="range-value" id="textScaleValue">100%</span>
-                </div>
-            </div>
-        </div>
-
         <div id="pressureView">
 
         <div class="city-search">
@@ -379,7 +383,11 @@
         <div id="dataStatus" class="data-status" style="display:none;"></div>
 
         <div class="chart-wrapper">
-            <canvas id="pressureChart" height="400"></canvas>
+            <!-- Chart.js sizes the canvas to this box, so changing its height
+                 is what makes the graph taller. -->
+            <div class="chart-canvas-box" id="chartBox">
+                <canvas id="pressureChart"></canvas>
+            </div>
         </div>
         <div id="pointInfo" class="point-info" style="display:none;">
             <span id="pointInfoTime" class="point-info-time"></span>
@@ -466,6 +474,27 @@
                 <p class="app-build" id="appBuild"></p>
             </div>
         </div>
+
+        <!-- Display settings live below the content on purpose: at the top
+             they pushed the graph down the screen, which is the thing they
+             exist to make readable. Text size is global; graph height only
+             applies to the Pressure tab and hides on the other. -->
+        <div class="controls" id="displayControls">
+            <div class="range-group">
+                <label>Text Size</label>
+                <div class="range-row">
+                    <input type="range" id="textScale" min="80" max="160" value="100" step="10">
+                    <span class="range-value" id="textScaleValue">100%</span>
+                </div>
+            </div>
+            <div class="range-group" id="graphHeightGroup">
+                <label>Graph Height</label>
+                <div class="range-row">
+                    <input type="range" id="chartHeight" min="280" max="1000" value="400" step="20">
+                    <span class="range-value" id="chartHeightValue">400px</span>
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- Day entry sheet -->
@@ -486,6 +515,10 @@
         const textScaleSlider = document.getElementById('textScale');
         const textScaleValue = document.getElementById('textScaleValue');
 
+        const chartHeightSlider = document.getElementById('chartHeight');
+        const chartHeightValue = document.getElementById('chartHeightValue');
+        const CHART_HEIGHT_KEY = 'bp_chart_height';
+
         // Always load full range; zoom/pan controls what's visible
         const DAYS_BACK = 10;
         const DAYS_FORWARD = 7;
@@ -496,6 +529,36 @@
         let chart = null;
         let searchTimeout = null;
         let lastLoadedData = null;  // Keep reference for text size re-render
+
+        // --- Graph Height ---
+        function applyChartHeight(px, persist) {
+            document.documentElement.style.setProperty('--chart-height', `${px}px`);
+            chartHeightValue.textContent = `${px}px`;
+            // resize() re-reads the container; without it the canvas keeps its
+            // old pixel size and the chart just stretches.
+            if (chart) chart.resize();
+            if (persist) {
+                try { localStorage.setItem(CHART_HEIGHT_KEY, String(px)); } catch (e) { /* ignore */ }
+            }
+        }
+
+        function restoreChartHeight() {
+            let px = 400;
+            try {
+                const saved = parseInt(localStorage.getItem(CHART_HEIGHT_KEY), 10);
+                if (!isNaN(saved)) {
+                    px = Math.min(1000, Math.max(280, saved));
+                }
+            } catch (e) { /* ignore */ }
+            chartHeightSlider.value = px;
+            applyChartHeight(px, false);
+        }
+
+        chartHeightSlider.addEventListener('input', () => {
+            applyChartHeight(parseInt(chartHeightSlider.value, 10), true);
+        });
+
+        restoreChartHeight();
 
         // --- Text Size ---
         textScaleSlider.addEventListener('input', () => {
