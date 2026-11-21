@@ -284,6 +284,13 @@
             color: #6ee7b7;
         }
 
+        /* TEMPORARY deploy check: red banner shows blue until DEPLOY_CHECK_UNTIL. Remove after. */
+        .alert-banner.warning.deploy-check {
+            background: rgba(59, 130, 246, 0.15);
+            border: 1px solid rgba(59, 130, 246, 0.4);
+            color: #93c5fd;
+        }
+
         /* Orange = COLOR_MODERATE on the graph, so the banner and chart agree */
         .alert-banner.caution {
             display: block;
@@ -1224,12 +1231,16 @@
             }
 
             // Alert banner
+            // TEMPORARY deploy check: until this time the red banner is drawn blue,
+            // to confirm a deploy reached the device. Inert afterwards; delete it then.
+            const DEPLOY_CHECK_UNTIL = Date.parse('2026-11-21T21:55:00Z');
+            const deployCheck = Date.now() < DEPLOY_CHECK_UNTIL ? ' deploy-check' : '';
             if (maxDropVal < -4) {
-                alertBanner.className = 'alert-banner warning';
+                alertBanner.className = 'alert-banner warning' + deployCheck;
                 alertBanner.innerHTML = `&#9888; Significant pressure drop of ${maxDropVal.toFixed(1)} hPa expected in the next 24 hours &mdash; migraine risk is elevated`;
                 alertBanner.style.display = 'block';
             } else if (maxDropVal < -2) {
-                alertBanner.className = 'alert-banner warning';
+                alertBanner.className = 'alert-banner warning' + deployCheck;
                 alertBanner.innerHTML = `&#9888; Moderate pressure drop of ${maxDropVal.toFixed(1)} hPa expected in the next 24 hours`;
                 alertBanner.style.display = 'block';
             } else if (Number(maxDropVal.toFixed(1)) <= -1.5) {
