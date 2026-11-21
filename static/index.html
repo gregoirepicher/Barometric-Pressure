@@ -284,6 +284,14 @@
             color: #6ee7b7;
         }
 
+        /* Orange = COLOR_MODERATE on the graph, so the banner and chart agree */
+        .alert-banner.caution {
+            display: block;
+            background: rgba(251, 146, 60, 0.12);
+            border: 1px solid rgba(251, 146, 60, 0.35);
+            color: #fdba74;
+        }
+
         .loading {
             text-align: center;
             padding: 60px;
@@ -1223,6 +1231,13 @@
             } else if (maxDropVal < -2) {
                 alertBanner.className = 'alert-banner warning';
                 alertBanner.innerHTML = `&#9888; Moderate pressure drop of ${maxDropVal.toFixed(1)} hPa expected in the next 24 hours`;
+                alertBanner.style.display = 'block';
+            } else if (Number(maxDropVal.toFixed(1)) <= -1.5) {
+                // Compared on the rounded value so the colour always agrees with
+                // the number shown: hPa readings carry one decimal, and their
+                // float difference can land at -1.4999999999 for a real 1.5 drop.
+                alertBanner.className = 'alert-banner caution';
+                alertBanner.innerHTML = `&#9888; Small pressure drop of ${maxDropVal.toFixed(1)} hPa expected in the next 24 hours &mdash; worth keeping an eye on`;
                 alertBanner.style.display = 'block';
             } else {
                 alertBanner.className = 'alert-banner ok';
